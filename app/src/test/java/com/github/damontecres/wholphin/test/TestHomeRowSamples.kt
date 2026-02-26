@@ -98,6 +98,7 @@ class TestHomeRowSamples {
                 is HomeRowConfig.TvPrograms -> foundTypes.add(it::class)
                 is HomeRowConfig.Suggestions -> foundTypes.add(it::class)
                 is HomeRowConfig.TvChannels -> foundTypes.add(it::class)
+                is HomeRowConfig.MyList -> foundTypes.add(it::class) // <-- The missing link!
             }
         }
         Assert.assertEquals(HomeRowConfig::class.sealedSubclasses.size, foundTypes.size)
@@ -128,7 +129,6 @@ class TestHomeRowSamples {
                 navDrawerService = mockk(),
                 latestNextUpService = mockk(),
                 imageUrlService = mockk(),
-                suggestionService = mockk(),
             )
 
         val str = """{

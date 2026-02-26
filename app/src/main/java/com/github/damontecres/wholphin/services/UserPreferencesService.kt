@@ -22,4 +22,10 @@ class UserPreferencesService
                     appPrefs,
                 )
             }
+    suspend fun update(transform: suspend (AppPreferences) -> AppPreferences) {
+        preferencesDataStore.updateData { current ->
+            transform(current)
+        }
     }
+}
+

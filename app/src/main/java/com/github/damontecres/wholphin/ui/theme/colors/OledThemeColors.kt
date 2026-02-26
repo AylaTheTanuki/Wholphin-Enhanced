@@ -44,19 +44,19 @@ val OledThemeColors =
         val surfaceContainerHighLight = Color(0xFFE8E7EF)
         val surfaceContainerHighestLight = Color(0xFFE3E2E9)
 
-        val onDark = Color(0xC0FFFFFF)
+        val onDark = Color(0xFFFFFFFF)
 
-        val primaryDark = Color(0xC04D4B4B)
-        val onPrimaryDark = Color(0xFFFFFFFF)
-        val primaryContainerDark = Color(0xFF505050)
+        val primaryDark = Color(0xFF00E5FF)
+        val onPrimaryDark = Color(0xFF000000)
+        val primaryContainerDark = Color(0xFF00E5FF).copy(alpha = 0.3f)
         val onPrimaryContainerDark = onDark
-        val secondaryDark = Color(0xFF808080)
+        val secondaryDark = Color(0xFF00E5FF)
         val onSecondaryDark = onDark
-        val secondaryContainerDark = Color(0xFF505050)
+        val secondaryContainerDark = Color(0xFF0A0A0A)
         val onSecondaryContainerDark = onDark
-        val tertiaryDark = Color(0xFFDEDEDE)
-        val onTertiaryDark = Color(0xFF363535)
-        val tertiaryContainerDark = Color(0xFF909090)
+        val tertiaryDark = Color(0xFF00E5FF)
+        val onTertiaryDark = Color(0xFF000000)
+        val tertiaryContainerDark = Color(0xFF0A0A0A)
         val onTertiaryContainerDark = onPrimaryDark
         val errorDark = Color(0xFFFFB4AB)
         val onErrorDark = Color(0xFF690005)
@@ -65,15 +65,15 @@ val OledThemeColors =
         val backgroundDark = Color(0xFF000000)
         val onBackgroundDark = onDark
         val surfaceDark = Color(0xFF000000)
-        val onSurfaceDark = Color(0xC0FFFFFF)
-        val surfaceVariantDark = Color(0xFF303030)
+        val onSurfaceDark = Color(0xFFFFFFFF)
+        val surfaceVariantDark = Color(0xFF0A0A0A)
         val onSurfaceVariantDark = onDark
         val outlineDark = Color(0xFF8E9099)
         val outlineVariantDark = Color(0xFF44474F)
         val scrimDark = Color(0xFF000000)
         val inverseSurfaceDark = Color(0xFFE8E8E8)
         val inverseOnSurfaceDark = Color(0xFF000000)
-        val inversePrimaryDark = Color(0xC0F9F4FF)
+        val inversePrimaryDark = Color(0xFF00E5FF)
         val surfaceDimDark = Color(0xFF121318)
         val surfaceBrightDark = Color(0xFF38393F)
         val surfaceContainerLowestDark = Color(0xFF0D0E13)
@@ -201,6 +201,6 @@ val OledThemeColors =
                 inverseSurface = inverseSurfaceDark,
                 inverseOnSurface = inverseOnSurfaceDark,
                 inversePrimary = inversePrimaryDark,
-                border = inversePrimaryDark,
+                border = Color(0xFF00E5FF),
             )
     }

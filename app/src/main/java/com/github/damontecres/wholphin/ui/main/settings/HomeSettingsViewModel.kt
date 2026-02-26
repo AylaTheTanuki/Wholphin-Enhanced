@@ -20,6 +20,7 @@ import com.github.damontecres.wholphin.data.model.HomeRowConfig.RecentlyReleased
 import com.github.damontecres.wholphin.data.model.HomeRowConfig.Suggestions
 import com.github.damontecres.wholphin.data.model.HomeRowConfig.TvChannels
 import com.github.damontecres.wholphin.data.model.HomeRowConfig.TvPrograms
+import com.github.damontecres.wholphin.data.model.HomeRowConfig.MyList
 import com.github.damontecres.wholphin.data.model.HomeRowViewOptions
 import com.github.damontecres.wholphin.data.model.SUPPORTED_HOME_PAGE_SETTINGS_VERSION
 import com.github.damontecres.wholphin.preferences.AppPreferences
@@ -505,31 +506,36 @@ class HomeSettingsViewModel
             }
         }
 
-        fun loadFromRemoteWeb() {
-            viewModelScope.launchIO {
-                serverRepository.currentUser.value?.let { user ->
-                    Timber.d("Loading home settings from web")
-                    try {
-                        _state.update { it.copy(loading = LoadingState.Loading) }
-                        val result = homeSettingsService.parseFromWebConfig(user.id)
-                        if (result != null) {
-                            Timber.v("Got web settings")
-                            idCounter = result.rows.maxOfOrNull { it.id }?.plus(1) ?: 0
-                            _state.update {
-                                it.copy(rows = result.rows)
-                            }
-                        } else {
-                            Timber.v("No web settings")
-                            showToast(context, "No server-side web settings found")
+    fun loadFromRemoteWeb() {
+        viewModelScope.launchIO {
+            serverRepository.currentUser.value?.let { user ->
+                Timber.d("Loading home settings from web")
+                try {
+                    _state.update { it.copy(loading = LoadingState.Loading) }
+                    // Call the service to get the raw web config
+                    val result = homeSettingsService.parseFromWebConfig(user.id)
+                    if (result != null) {
+                        Timber.v("Got web settings")
+                        // We must 'resolve' these raw configs into displayable rows
+                        val newRows = result.rows.mapIndexed { index, config ->
+                            homeSettingsService.resolve(index, config)
                         }
-                        fetchRowData()
-                    } catch (ex: Exception) {
-                        Timber.e(ex)
-                        showToast(context, "Error: ${ex.localizedMessage}")
+                        idCounter = newRows.maxOfOrNull { it.id }?.plus(1) ?: 0
+                        _state.update {
+                            it.copy(rows = newRows)
+                        }
+                    } else {
+                        Timber.v("No web settings")
+                        showToast(context, "No server-side web settings found")
                     }
+                    fetchRowData()
+                } catch (ex: Exception) {
+                    Timber.e(ex)
+                    showToast(context, "Error: ${ex.localizedMessage}")
                 }
             }
         }
+    }
 
         fun saveToLocal() {
             // This uses injected ioScope so that it will still run when the page is closing
@@ -639,13 +645,10 @@ class HomeSettingsViewModel
                     state.rows.map {
                         val newConfig =
                             when (it.config) {
-                                is ContinueWatching,
-                                is NextUp,
-                                is ContinueWatchingCombined,
-                                -> {
-                                    it.config.updateViewOptions(preset.continueWatching)
-                                }
-
+                                is ContinueWatching -> it.config.updateViewOptions(preset.continueWatching)
+                                is NextUp -> it.config.updateViewOptions(preset.continueWatching)
+                                is ContinueWatchingCombined -> it.config.updateViewOptions(preset.continueWatching)
+                                is MyList -> it.config.updateViewOptions(preset.movieLibrary)
                                 is HomeRowConfig.ByParent -> {
                                     val collectionType = getCollectionType(it.config.parentId)
                                     val viewOptions = preset.getByCollectionType(collectionType)

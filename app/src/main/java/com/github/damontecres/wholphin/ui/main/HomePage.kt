@@ -109,7 +109,7 @@ fun HomePage(
 
         LoadingState.Loading,
         LoadingState.Pending,
-        -> {
+            -> {
             LoadingPage(modifier)
         }
 
@@ -128,36 +128,8 @@ fun HomePage(
                 },
                 onLongClickItem = { clickedPosition, item ->
                     position = clickedPosition
-                    val dialogItems =
-                        buildMoreDialogItemsForHome(
-                            context = context,
-                            item = item,
-                            seriesId = item.data.seriesId,
-                            playbackPosition = item.playbackPosition,
-                            watched = item.played,
-                            favorite = item.favorite,
-                            actions =
-                                MoreDialogActions(
-                                    navigateTo = viewModel.navigationManager::navigateTo,
-                                    onClickWatch = { itemId, played ->
-                                        viewModel.setWatched(itemId, played)
-                                    },
-                                    onClickFavorite = { itemId, favorite ->
-                                        viewModel.setFavorite(itemId, favorite)
-                                    },
-                                    onClickAddPlaylist = { itemId ->
-                                        playlistViewModel.loadPlaylists(MediaType.VIDEO)
-                                        showPlaylistDialog = itemId
-                                    },
-                                    onSendMediaInfo = viewModel.mediaReportService::sendReportFor,
-                                ),
-                        )
-                    dialog =
-                        DialogParams(
-                            title = item.title ?: "",
-                            fromLongClick = true,
-                            items = dialogItems,
-                        )
+                    // THIS IS THE FIX: Directly toggle the favorite status instead of opening the dialog!
+                    viewModel.setFavorite(item.id, !item.favorite)
                 },
                 onClickPlay = { _, item ->
                     viewModel.navigationManager.navigateTo(Destination.Playback(item))
@@ -284,7 +256,7 @@ fun HomePageContent(
                             when (val r = row) {
                                 is HomeRowLoadingState.Loading,
                                 is HomeRowLoadingState.Pending,
-                                -> {
+                                    -> {
                                     FocusableItemRow(
                                         title = r.title,
                                         subtitle = stringResource(R.string.loading),
@@ -369,7 +341,7 @@ fun HomePageContent(
         when (loadingState) {
             LoadingState.Pending,
             LoadingState.Loading,
-            -> {
+                -> {
                 Box(
                     modifier =
                         Modifier
@@ -482,30 +454,44 @@ fun HomePageCardContent(
         }
 
         else -> {
+            // THE MASTER CANVAS FIX
+            // Detect if this is an episode we are actively watching
+            val ticks = item?.data?.userData?.playbackPositionTicks ?: 0L
+            val isInterceptedEpisode = item?.type == BaseItemKind.EPISODE && ticks > 0L
+
             val imageType =
-                remember(item, viewOptions) {
-                    if (item?.type == BaseItemKind.EPISODE) {
+                remember(item, viewOptions, isInterceptedEpisode) {
+                    if (isInterceptedEpisode) {
+                        org.jellyfin.sdk.model.api.ImageType.PRIMARY
+                    } else if (item?.type == BaseItemKind.EPISODE) {
                         viewOptions.episodeImageType.imageType
                     } else {
                         viewOptions.imageType.imageType
                     }
                 }
+
             val ratio =
-                remember(item, viewOptions) {
-                    if (item?.type == BaseItemKind.EPISODE) {
+                remember(item, viewOptions, isInterceptedEpisode) {
+                    if (isInterceptedEpisode) {
+                        16f / 9f // Force Widescreen Canvas so Picard can breathe!
+                    } else if (item?.type == BaseItemKind.EPISODE) {
                         viewOptions.episodeAspectRatio.ratio
                     } else {
                         viewOptions.aspectRatio.ratio
                     }
                 }
+
             val scale =
-                remember(item, viewOptions) {
-                    if (item?.type == BaseItemKind.EPISODE) {
+                remember(item, viewOptions, isInterceptedEpisode) {
+                    if (isInterceptedEpisode) {
+                        androidx.compose.ui.layout.ContentScale.Crop // Natural Crop, no squishing
+                    } else if (item?.type == BaseItemKind.EPISODE) {
                         viewOptions.episodeContentScale.scale
                     } else {
                         viewOptions.contentScale.scale
                     }
                 }
+
             if (viewOptions.showTitles) {
                 BannerCardWithTitle(
                     title = item?.title,

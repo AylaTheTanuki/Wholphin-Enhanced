@@ -44,7 +44,9 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
@@ -91,9 +93,15 @@ sealed interface PlaybackAction {
     data class ToggleCaptions(
         val index: Int,
     ) : PlaybackAction
-
+    data class SetMaxBitrate(
+        val bitrate: Int?,
+    ) : PlaybackAction
     data class ToggleAudio(
         val index: Int,
+    ) : PlaybackAction
+
+    data class ToggleVideoQuality(
+        val index: Int?,
     ) : PlaybackAction
 
     data class PlaybackSpeed(
@@ -325,6 +333,17 @@ fun RightPlaybackButtons(
         modifier = modifier.focusGroup(),
         horizontalArrangement = Arrangement.spacedBy(buttonSpacing),
     ) {
+        // Audio
+        PlaybackButton(
+            enabled = true,
+            iconRes = R.string.fa_music,
+            isFontAwesome = true,
+            onClick = {
+                onControllerInteraction.invoke()
+                onClickPlaybackDialogType.invoke(PlaybackDialogType.AUDIO)
+            },
+            onControllerInteraction = onControllerInteraction,
+        )
         // Captions
         PlaybackButton(
             enabled = true,
@@ -424,12 +443,13 @@ fun PlaybackButtons(
 
 @Composable
 fun PlaybackButton(
-    @DrawableRes iconRes: Int,
+    iconRes: Int,
     onClick: () -> Unit,
     onControllerInteraction: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     interactionSource: MutableInteractionSource? = null,
+    isFontAwesome: Boolean = false,
 ) {
     val selectedColor = MaterialTheme.colorScheme.border
     Button(
@@ -448,17 +468,28 @@ fun PlaybackButton(
                 .size(36.dp, 36.dp)
                 .onFocusChanged { onControllerInteraction.invoke() },
     ) {
-        Icon(
-            modifier = Modifier.fillMaxSize(),
-            painter = painterResource(iconRes),
-            contentDescription = "",
-            tint =
-                if (LocalTheme.current == AppThemeColors.OLED_BLACK) {
-                    LocalContentColor.current
-                } else {
-                    MaterialTheme.colorScheme.onSurface
-                },
-        )
+        val color = if (LocalTheme.current == AppThemeColors.OLED_BLACK) {
+            LocalContentColor.current
+        } else {
+            MaterialTheme.colorScheme.onSurface
+        }
+        if (isFontAwesome) {
+            Text(
+                text = stringResource(iconRes),
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                fontSize = 16.sp,
+                fontFamily = com.github.damontecres.wholphin.ui.FontAwesome,
+                color = color,
+                modifier = Modifier.fillMaxSize().wrapContentSize(Alignment.Center),
+            )
+        } else {
+            Icon(
+                modifier = Modifier.fillMaxSize(),
+                painter = painterResource(iconRes),
+                contentDescription = "",
+                tint = color,
+            )
+        }
     }
 }
 

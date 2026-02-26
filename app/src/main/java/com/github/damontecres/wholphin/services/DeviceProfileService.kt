@@ -16,56 +16,57 @@ import javax.inject.Singleton
 
 @Singleton
 class DeviceProfileService
-    @Inject
-    constructor(
-        @param:ApplicationContext private val context: Context,
-    ) {
-        val mediaCodecCapabilitiesTest by lazy {
-            // Created lazily below on the IO thread since it cn take time
-            MediaCodecCapabilitiesTest(context)
-        }
-        private val mutex = Mutex()
-
-        private var configuration: DeviceProfileConfiguration? = null
-        private var deviceProfile: DeviceProfile? = null
-
-        suspend fun getOrCreateDeviceProfile(
-            prefs: PlaybackPreferences,
-            serverVersion: ServerVersion?,
-        ): DeviceProfile =
-            withContext(Dispatchers.IO) {
-                mutex.withLock {
-                    val newConfig =
-                        DeviceProfileConfiguration(
-                            maxBitrate = prefs.maxBitrate.toInt(),
-                            isAC3Enabled = prefs.overrides.ac3Supported,
-                            downMixAudio = prefs.overrides.downmixStereo,
-                            assDirectPlay = prefs.overrides.directPlayAss,
-                            pgsDirectPlay = prefs.overrides.directPlayPgs,
-                            dolbyVisionELDirectPlay = prefs.overrides.directPlayDolbyVisionEL,
-                            decodeAv1 = prefs.overrides.decodeAv1,
-                            jellyfinTenEleven =
-                                serverVersion != null && serverVersion >= ServerVersion(10, 11, 0),
-                        )
-                    if (deviceProfile == null || this@DeviceProfileService.configuration != newConfig) {
-                        this@DeviceProfileService.configuration = newConfig
-                        this@DeviceProfileService.deviceProfile =
-                            createDeviceProfile(
-                                mediaTest = mediaCodecCapabilitiesTest,
-                                maxBitrate = newConfig.maxBitrate,
-                                isAC3Enabled = newConfig.isAC3Enabled,
-                                downMixAudio = newConfig.downMixAudio,
-                                assDirectPlay = newConfig.assDirectPlay,
-                                pgsDirectPlay = newConfig.pgsDirectPlay,
-                                dolbyVisionELDirectPlay = newConfig.dolbyVisionELDirectPlay,
-                                decodeAv1 = prefs.overrides.decodeAv1,
-                                jellyfinTenEleven = newConfig.jellyfinTenEleven,
-                            )
-                    }
-                    this@DeviceProfileService.deviceProfile!!
-                }
-            }
+@Inject
+constructor(
+    @param:ApplicationContext private val context: Context,
+) {
+    val mediaCodecCapabilitiesTest by lazy {
+        // Created lazily below on the IO thread since it cn take time
+        MediaCodecCapabilitiesTest(context)
     }
+    private val mutex = Mutex()
+
+    private var configuration: DeviceProfileConfiguration? = null
+    private var deviceProfile: DeviceProfile? = null
+
+    suspend fun getOrCreateDeviceProfile(
+        prefs: PlaybackPreferences,
+        serverVersion: ServerVersion?,
+    ): DeviceProfile =
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                val newConfig =
+                    DeviceProfileConfiguration(
+                        // THE FIX: Hardcoding a massive 200 Mbps (200,000,000 bps) fallback transcode limit
+                        maxBitrate = 200_000_000,
+                        isAC3Enabled = prefs.overrides.ac3Supported,
+                        downMixAudio = prefs.overrides.downmixStereo,
+                        assDirectPlay = prefs.overrides.directPlayAss,
+                        pgsDirectPlay = prefs.overrides.directPlayPgs,
+                        dolbyVisionELDirectPlay = prefs.overrides.directPlayDolbyVisionEL,
+                        decodeAv1 = prefs.overrides.decodeAv1,
+                        jellyfinTenEleven =
+                            serverVersion != null && serverVersion >= ServerVersion(10, 11, 0),
+                    )
+                if (deviceProfile == null || this@DeviceProfileService.configuration != newConfig) {
+                    this@DeviceProfileService.configuration = newConfig
+                    this@DeviceProfileService.deviceProfile =
+                        createDeviceProfile(
+                            mediaTest = mediaCodecCapabilitiesTest,
+                            maxBitrate = newConfig.maxBitrate,
+                            isAC3Enabled = newConfig.isAC3Enabled,
+                            downMixAudio = newConfig.downMixAudio,
+                            assDirectPlay = newConfig.assDirectPlay,
+                            pgsDirectPlay = newConfig.pgsDirectPlay,
+                            dolbyVisionELDirectPlay = newConfig.dolbyVisionELDirectPlay,
+                            decodeAv1 = prefs.overrides.decodeAv1,
+                            jellyfinTenEleven = newConfig.jellyfinTenEleven,
+                        )
+                }
+                this@DeviceProfileService.deviceProfile!!
+            }
+        }
+}
 
 /**
  * The configuration used in [createDeviceProfile]

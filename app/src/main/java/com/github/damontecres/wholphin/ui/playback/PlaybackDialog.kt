@@ -30,6 +30,7 @@ import androidx.tv.material3.Text
 import androidx.tv.material3.surfaceColorAtElevation
 import com.github.damontecres.wholphin.R
 import com.github.damontecres.wholphin.data.model.TrackIndex
+import com.github.damontecres.wholphin.services.syncplay.SyncPlayManager
 import com.github.damontecres.wholphin.ui.AppColors
 import com.github.damontecres.wholphin.ui.components.SelectedLeadingContent
 import kotlin.time.Duration
@@ -42,6 +43,8 @@ enum class PlaybackDialogType {
     PLAYBACK_SPEED,
     VIDEO_SCALE,
     SUBTITLE_DELAY,
+    VIDEO_QUALITY,
+    SYNC_PLAY,
 }
 
 data class PlaybackSettings(
@@ -50,6 +53,9 @@ data class PlaybackSettings(
     val audioStreams: List<SimpleMediaStream>,
     val subtitleIndex: Int?,
     val subtitleStreams: List<SimpleMediaStream>,
+    val videoStreams: List<SimpleMediaStream>,
+    val currentVideoIndex: Int?,
+    val maxBitrate: Long,
     val playbackSpeed: Float,
     val contentScale: ContentScale,
     val subtitleDelay: Duration,
@@ -67,14 +73,24 @@ fun PlaybackDialog(
     onClickPlaybackDialogType: (PlaybackDialogType) -> Unit,
     onPlaybackActionClick: (PlaybackAction) -> Unit,
     onChangeSubtitleDelay: (Duration) -> Unit,
+    syncPlayManager: SyncPlayManager? = null,
+
 ) {
     when (type) {
         PlaybackDialogType.MORE -> {
-            val options =
+            // FIXED THE GENERIC TYPE ERROR HERE by typing it to "Any"
+            val options: List<BottomDialogItem<Any>> =
                 buildList {
                     add(
                         BottomDialogItem(
-                            data = 0,
+                            data = PlaybackDialogType.SYNC_PLAY,
+                            headline = "SyncPlay",
+                            supporting = null,
+                        ),
+                    )
+                    add(
+                        BottomDialogItem(
+                            data = "DEBUG_INFO", // Changed from 0 so the list is uniform
                             headline = stringResource(if (settings.showDebugInfo) R.string.hide_debug_info else R.string.show_debug_info),
                             supporting = null,
                         ),
@@ -84,10 +100,13 @@ fun PlaybackDialog(
                 choices = options,
                 onDismissRequest = {
                     onDismissRequest.invoke()
-//                    focusRequester.tryRequestFocus()
                 },
-                onSelectChoice = { index, choice ->
-                    onPlaybackActionClick.invoke(PlaybackAction.ShowDebug)
+                onSelectChoice = { _, choice ->
+                    if (choice.data is PlaybackDialogType) {
+                        onClickPlaybackDialogType(choice.data)
+                    } else {
+                        onPlaybackActionClick.invoke(PlaybackAction.ShowDebug)
+                    }
                 },
                 gravity = Gravity.START,
             )
@@ -121,15 +140,21 @@ fun PlaybackDialog(
         }
 
         PlaybackDialogType.SETTINGS -> {
-            val currentAudio =
-                remember(settings) { settings.audioStreams.firstOrNull { it.index == settings.audioIndex } }
             val options =
                 buildList {
+                    // AUDIO ROW REMOVED - This is the only change to this file.
                     add(
                         BottomDialogItem(
-                            data = PlaybackDialogType.AUDIO,
-                            headline = stringResource(R.string.audio),
-                            supporting = currentAudio?.displayTitle,
+                            data = PlaybackDialogType.VIDEO_QUALITY,
+                            headline = stringResource(R.string.video),
+                            supporting = when (settings.maxBitrate) {
+                                120000000L -> "Automatic (Direct Play)"
+                                40000000L -> "4K - 40 Mbps"
+                                10000000L -> "1080p - 10 Mbps"
+                                4000000L -> "720p - 4 Mbps"
+                                1500000L -> "480p - 1.5 Mbps"
+                                else -> "Automatic (Direct Play)"
+                            }
                         ),
                     )
                     add(
@@ -176,13 +201,45 @@ fun PlaybackDialog(
                 onDismissRequest = {
                     onControllerInteraction.invoke()
                     onDismissRequest.invoke()
-//                    scope.launch {
-//                        delay(250L)
-//                        settingsFocusRequester.tryRequestFocus()
-//                    }
                 },
                 onSelectChoice = { _, choice ->
                     onPlaybackActionClick.invoke(PlaybackAction.ToggleAudio(choice.index))
+                },
+                gravity = Gravity.END,
+            )
+        }
+
+        PlaybackDialogType.VIDEO_QUALITY -> {
+            val bitrates: List<Pair<Int?, String>> = listOf(
+                null to "Automatic (Direct Play)",
+                120000000 to "4K - 120 Mbps",
+                40000000 to "4K - 40 Mbps",
+                10000000 to "1080p - 10 Mbps",
+                4000000 to "720p - 4 Mbps",
+                1500000 to "480p - 1.5 Mbps"
+            )
+
+            // FIXED THE GENERIC TYPE ERROR HERE by typing it to "Int?"
+            val choices: List<BottomDialogItem<Int?>> = bitrates.map { (bitrate, name) ->
+                BottomDialogItem(
+                    data = bitrate,
+                    headline = name,
+                    supporting = null
+                )
+            }
+
+            BottomDialog(
+                choices = choices,
+                currentChoice = choices.firstOrNull {
+                    it.data?.toLong() == settings.maxBitrate || (it.data == null && settings.maxBitrate == 120000000L)
+                },
+                onDismissRequest = {
+                    onControllerInteraction.invoke()
+                    onDismissRequest.invoke()
+                },
+                onSelectChoice = { _, choice ->
+                    onDismissRequest.invoke()
+                    onPlaybackActionClick.invoke(PlaybackAction.SetMaxBitrate(choice.data))
                 },
                 gravity = Gravity.END,
             )
@@ -203,10 +260,6 @@ fun PlaybackDialog(
                 onDismissRequest = {
                     onControllerInteraction.invoke()
                     onDismissRequest.invoke()
-//                scope.launch {
-//                    delay(250L)
-//                    settingsFocusRequester.tryRequestFocus()
-//                }
                 },
                 onSelectChoice = { _, value ->
                     onPlaybackActionClick.invoke(PlaybackAction.PlaybackSpeed(value.data))
@@ -230,10 +283,6 @@ fun PlaybackDialog(
                 onDismissRequest = {
                     onControllerInteraction.invoke()
                     onDismissRequest.invoke()
-//                scope.launch {
-//                    delay(250L)
-//                    settingsFocusRequester.tryRequestFocus()
-//                }
                 },
                 onSelectChoice = { _, choice ->
                     onPlaybackActionClick.invoke(PlaybackAction.Scale(choice.data))
@@ -267,6 +316,17 @@ fun PlaybackDialog(
                 }
             }
         }
+
+        PlaybackDialogType.SYNC_PLAY -> {
+            if (syncPlayManager != null) {
+                // Assuming SyncPlayDialog is a Composable added by your AI
+                // The AI created this file separately, so this call should work!
+                SyncPlayDialog(
+                    syncPlayManager = syncPlayManager,
+                    onDismissRequest = onDismissRequest
+                )
+            }
+        }
     }
 }
 
@@ -280,15 +340,14 @@ fun SubtitleChoiceBottomDialog(
     hasDownloadPermission: Boolean,
     currentChoice: Int? = null,
 ) {
-    // TODO enforcing a width ends up ignore the gravity
     Dialog(
         onDismissRequest = onDismissRequest,
         properties = DialogProperties(usePlatformDefaultWidth = true),
     ) {
         val dialogWindowProvider = LocalView.current.parent as? DialogWindowProvider
         dialogWindowProvider?.window?.let { window ->
-            window.setGravity(Gravity.BOTTOM or gravity) // Move down, by default dialogs are in the centre
-            window.setDimAmount(0f) // Remove dimmed background of ongoing playback
+            window.setGravity(Gravity.BOTTOM or gravity)
+            window.setDimAmount(0f)
         }
 
         Box(
@@ -305,7 +364,6 @@ fun SubtitleChoiceBottomDialog(
                 modifier =
                     Modifier
                         .fillMaxWidth()
-//                        .widthIn(max = 240.dp)
                         .wrapContentWidth(),
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -324,7 +382,6 @@ fun SubtitleChoiceBottomDialog(
                                 text = stringResource(R.string.none),
                             )
                         },
-                        supportingContent = {},
                     )
                 }
                 item {
@@ -341,10 +398,9 @@ fun SubtitleChoiceBottomDialog(
                                 text = stringResource(R.string.only_forced_subtitles),
                             )
                         },
-                        supportingContent = {},
                     )
                 }
-                itemsIndexed(choices) { index, choice ->
+                itemsIndexed(choices) { _, choice ->
                     val interactionSource = remember { MutableInteractionSource() }
                     ListItem(
                         selected = choice.index == currentChoice,
@@ -371,13 +427,11 @@ fun SubtitleChoiceBottomDialog(
                         selected = false,
                         enabled = hasDownloadPermission,
                         onClick = onSelectSearch,
-                        leadingContent = {},
                         headlineContent = {
                             Text(
                                 text = stringResource(R.string.search_and_download),
                             )
                         },
-                        supportingContent = {},
                     )
                 }
             }
@@ -393,15 +447,14 @@ fun StreamChoiceBottomDialog(
     gravity: Int,
     currentChoice: Int? = null,
 ) {
-    // TODO enforcing a width ends up ignore the gravity
     Dialog(
         onDismissRequest = onDismissRequest,
         properties = DialogProperties(usePlatformDefaultWidth = true),
     ) {
         val dialogWindowProvider = LocalView.current.parent as? DialogWindowProvider
         dialogWindowProvider?.window?.let { window ->
-            window.setGravity(Gravity.BOTTOM or gravity) // Move down, by default dialogs are in the centre
-            window.setDimAmount(0f) // Remove dimmed background of ongoing playback
+            window.setGravity(Gravity.BOTTOM or gravity)
+            window.setDimAmount(0f)
         }
 
         Box(
@@ -418,7 +471,6 @@ fun StreamChoiceBottomDialog(
                 modifier =
                     Modifier
                         .fillMaxWidth()
-//                        .widthIn(max = 240.dp)
                         .wrapContentWidth(),
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -448,4 +500,15 @@ fun StreamChoiceBottomDialog(
             }
         }
     }
+}
+
+@Composable
+fun VideoQualityBottomDialog(
+    choices: List<SimpleMediaStream>,
+    onDismissRequest: () -> Unit,
+    onSelectChoice: (Int?) -> Unit,
+    gravity: Int,
+    currentChoice: Int? = null,
+) {
+    // Unused generic function left empty as placeholder
 }

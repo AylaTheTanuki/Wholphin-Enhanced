@@ -3,6 +3,8 @@ package com.github.damontecres.wholphin.util.profile
 // Adapted from https://github.com/jellyfin/jellyfin-androidtv/blob/v0.19.4/app/src/main/java/org/jellyfin/androidtv/util/profile/deviceProfile.kt
 
 import android.media.MediaCodecInfo
+import android.media.MediaCodecList
+import android.media.MediaFormat
 import androidx.media3.common.MimeTypes
 import com.github.damontecres.wholphin.util.profile.KnownDefects.supportsHi10P52
 import org.jellyfin.sdk.model.api.CodecType
@@ -45,21 +47,38 @@ val supportedAudioCodecs =
         Codec.Audio.VORBIS,
     )
 
-// fun createDeviceProfile(
-//    context: Context,
-//    userPreferences: UserPreferences,
-//    serverVersion: ServerVersion?,
-// ) = userPreferences.appPreferences.playbackPreferences.let { prefs ->
-//    createDeviceProfile(
-//        mediaTest = MediaCodecCapabilitiesTest(context),
-//        maxBitrate = prefs.maxBitrate.toInt(),
-//        isAC3Enabled = prefs.overrides.ac3Supported,
-//        downMixAudio = prefs.overrides.downmixStereo,
-//        assDirectPlay = prefs.overrides.directPlayAss,
-//        pgsDirectPlay = prefs.overrides.directPlayPgs,
-//        jellyfinTenEleven = serverVersion != null && serverVersion >= ServerVersion(10, 11, 0),
-//    )
-// }
+// THE SMART AUDIO SCANNER HACK
+// This dynamically queries the Android TV's hardware to see if it actually has decoders for heavy codecs
+private fun isCodecSupportedByHardware(mimeType: String): Boolean {
+    return try {
+        val format = MediaFormat.createAudioFormat(mimeType, 48000, 2)
+        val codecList = MediaCodecList(MediaCodecList.ALL_CODECS)
+        codecList.findDecoderForFormat(format) != null
+    } catch (e: Exception) {
+        false
+    }
+}
+
+private val dynamicAudioCodecs: Array<String>
+    get() {
+        // We map the heavy, problematic theater codecs to their official Android MimeTypes
+        val problematicAudioCodecs = mapOf(
+            Codec.Audio.TRUEHD to MimeTypes.AUDIO_TRUEHD,
+            Codec.Audio.DTS to MimeTypes.AUDIO_DTS,
+            Codec.Audio.DCA to MimeTypes.AUDIO_DTS,
+            Codec.Audio.MLP to MimeTypes.AUDIO_TRUEHD // MLP is the core of Dolby TrueHD
+        )
+
+        // Filter the master list: if it's a heavy codec, scan the TV hardware. If it fails, remove it!
+        return supportedAudioCodecs.filter { codec ->
+            val mimeType = problematicAudioCodecs[codec]
+            if (mimeType != null) {
+                isCodecSupportedByHardware(mimeType)
+            } else {
+                true // Always allow standard codecs like AAC, MP3, etc.
+            }
+        }.toTypedArray()
+    }
 
 fun createDeviceProfile(
     mediaTest: MediaCodecCapabilitiesTest,
@@ -72,6 +91,8 @@ fun createDeviceProfile(
     decodeAv1: Boolean,
     jellyfinTenEleven: Boolean,
 ) = buildDeviceProfile {
+
+    // Uses our new hardware-scanned dynamic list instead of the hardcoded one
     val allowedAudioCodecs =
         when {
             downMixAudio -> {
@@ -79,13 +100,13 @@ fun createDeviceProfile(
             }
 
             !isAC3Enabled -> {
-                supportedAudioCodecs
+                dynamicAudioCodecs
                     .filterNot { it == Codec.Audio.EAC3 || it == Codec.Audio.AC3 }
                     .toTypedArray()
             }
 
             else -> {
-                supportedAudioCodecs
+                dynamicAudioCodecs
             }
         }
 
@@ -215,13 +236,13 @@ fun createDeviceProfile(
 
                 else -> {
                     ProfileConditionValue.VIDEO_PROFILE inCollection
-                        listOfNotNull(
-                            "high",
-                            "main",
-                            "baseline",
-                            "constrained baseline",
-                            if (supportsAVCHigh10) "high 10" else null,
-                        )
+                            listOfNotNull(
+                                "high",
+                                "main",
+                                "baseline",
+                                "constrained baseline",
+                                if (supportsAVCHigh10) "high 10" else null,
+                            )
                 }
             }
         }
@@ -237,12 +258,12 @@ fun createDeviceProfile(
 
             applyConditions {
                 ProfileConditionValue.VIDEO_PROFILE inCollection
-                    listOf(
-                        "high",
-                        "main",
-                        "baseline",
-                        "constrained baseline",
-                    )
+                        listOf(
+                            "high",
+                            "main",
+                            "baseline",
+                            "constrained baseline",
+                        )
             }
         }
     }
@@ -302,10 +323,10 @@ fun createDeviceProfile(
 
                 else -> {
                     ProfileConditionValue.VIDEO_PROFILE inCollection
-                        listOfNotNull(
-                            "main",
-                            if (supportsHevcMain10) "main 10" else null,
-                        )
+                            listOfNotNull(
+                                "main",
+                                if (supportsHevcMain10) "main 10" else null,
+                            )
                 }
             }
         }
@@ -486,9 +507,9 @@ fun createDeviceProfile(
 
             conditions {
                 ProfileConditionValue.VIDEO_RANGE_TYPE notEquals
-                    unsupportedRangeTypesAv1.joinToString(
-                        "|",
-                    )
+                        unsupportedRangeTypesAv1.joinToString(
+                            "|",
+                        )
             }
 
             applyConditions {
@@ -505,9 +526,9 @@ fun createDeviceProfile(
 
             conditions {
                 ProfileConditionValue.VIDEO_RANGE_TYPE notEquals
-                    unsupportedRangeTypesHevc.joinToString(
-                        "|",
-                    )
+                        unsupportedRangeTypesHevc.joinToString(
+                            "|",
+                        )
             }
 
             applyConditions {

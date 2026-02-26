@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 31,
-    "identityHash": "c6829d764ec85321ab3be9905d6c0e3a",
+    "identityHash": "5cdb02827a233b010d04efe7b4674b77",
     "entities": [
       {
         "tableName": "servers",
@@ -128,7 +128,7 @@
       },
       {
         "tableName": "ItemPlayback",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`rowId` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `userId` INTEGER NOT NULL, `itemId` TEXT NOT NULL, `sourceId` TEXT, `audioIndex` INTEGER NOT NULL, `subtitleIndex` INTEGER NOT NULL, FOREIGN KEY(`userId`) REFERENCES `users`(`rowId`) ON UPDATE CASCADE ON DELETE CASCADE )",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`rowId` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `userId` INTEGER NOT NULL, `itemId` TEXT NOT NULL, `sourceId` TEXT, `audioIndex` INTEGER NOT NULL, `subtitleIndex` INTEGER NOT NULL, `videoIndex` INTEGER, FOREIGN KEY(`userId`) REFERENCES `users`(`rowId`) ON UPDATE CASCADE ON DELETE CASCADE )",
         "fields": [
           {
             "fieldPath": "rowId",
@@ -164,6 +164,11 @@
             "columnName": "subtitleIndex",
             "affinity": "INTEGER",
             "notNull": true
+          },
+          {
+            "fieldPath": "videoIndex",
+            "columnName": "videoIndex",
+            "affinity": "INTEGER"
           }
         ],
         "primaryKey": {
@@ -636,7 +641,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'c6829d764ec85321ab3be9905d6c0e3a')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '5cdb02827a233b010d04efe7b4674b77')"
     ]
   }
 }

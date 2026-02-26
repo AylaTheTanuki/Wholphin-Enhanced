@@ -116,13 +116,6 @@ class NavDrawerViewModel
         ) {
             if (item !is NavDrawerItem.More) setShowMore(false)
             when (item) {
-                NavDrawerItem.Favorites -> {
-                    setIndex(index)
-                    navigationManager.navigateToFromDrawer(
-                        Destination.Favorites,
-                    )
-                }
-
                 NavDrawerItem.More -> {
                     setShowMore(!moreExpanded.value!!)
                 }
@@ -163,8 +156,6 @@ class NavDrawerViewModel
                     ).map {
                         if (it is ServerNavDrawerItem) {
                             it.destination
-                        } else if (it is NavDrawerItem.Favorites) {
-                            Destination.Favorites
                         } else if (it is NavDrawerItem.Discover) {
                             Destination.Discover
                         } else {
@@ -204,13 +195,6 @@ sealed interface NavDrawerItem {
     val id: String
 
     fun name(context: Context): String
-
-    object Favorites : NavDrawerItem {
-        override val id: String
-            get() = "a_favorites"
-
-        override fun name(context: Context): String = context.getString(R.string.favorites)
-    }
 
     object More : NavDrawerItem {
         override val id: String
@@ -614,10 +598,6 @@ fun NavigationDrawerScope.NavItem(
     val icon =
         remember(library) {
             when (library) {
-                NavDrawerItem.Favorites -> {
-                    R.string.fa_heart
-                }
-
                 NavDrawerItem.More -> {
                     R.string.fa_ellipsis
                 }

@@ -77,13 +77,7 @@ class PlayerFactory
                         val extensions = prefs?.overrides?.mediaExtensionsEnabled
                         val decodeAv1 = prefs?.overrides?.decodeAv1 == true
                         Timber.v("extensions=$extensions")
-                        val rendererMode =
-                            when (extensions) {
-                                MediaExtensionStatus.MES_FALLBACK -> DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON
-                                MediaExtensionStatus.MES_PREFERRED -> DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
-                                MediaExtensionStatus.MES_DISABLED -> DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF
-                                else -> DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON
-                            }
+                        val rendererMode = DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF
                         ExoPlayer
                             .Builder(context)
                             .setRenderersFactory(
@@ -127,13 +121,7 @@ class PlayerFactory
                         val extensions = prefs.overrides.mediaExtensionsEnabled
                         val decodeAv1 = prefs.overrides.decodeAv1
                         Timber.v("extensions=$extensions")
-                        val rendererMode =
-                            when (extensions) {
-                                MediaExtensionStatus.MES_FALLBACK -> DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON
-                                MediaExtensionStatus.MES_PREFERRED -> DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
-                                MediaExtensionStatus.MES_DISABLED -> DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF
-                                else -> DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON
-                            }
+                        val rendererMode = DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF
                         ExoPlayer
                             .Builder(context)
                             .setRenderersFactory(

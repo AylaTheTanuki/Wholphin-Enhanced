@@ -48,7 +48,6 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
@@ -70,6 +69,7 @@ import com.github.damontecres.wholphin.ui.playback.isPlayKeyUp
 import com.github.damontecres.wholphin.ui.tryRequestFocus
 import com.github.damontecres.wholphin.util.ExceptionHandler
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
@@ -210,7 +210,6 @@ fun <T : CardGridItem> CardGrid(
     } else {
         var longPressing by remember { mutableStateOf(false) }
         Row(
-//        horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier =
                 modifier
                     .fillMaxSize()
@@ -282,8 +281,6 @@ fun <T : CardGridItem> CardGrid(
                             .focusRestorer(firstFocus)
                             .focusProperties {
                                 onExit = {
-                                    // Leaving the grid, so "forget" the position
-//                                focusedIndex = -1
                                 }
                                 onEnter = {
                                     if (focusedIndex < 0 && gridState.firstVisibleItemIndex <= startPosition) {
@@ -294,7 +291,7 @@ fun <T : CardGridItem> CardGrid(
                 ) {
                     items(pager.size) { index ->
                         val mod =
-                            if ((index == focusedIndex) or (focusedIndex < 0 && index == 0)) {
+                            if ((index == focusedIndex) || (focusedIndex == -1 && index == 0)) {
                                 if (DEBUG) Timber.d("Adding firstFocus to focusedIndex $index")
                                 Modifier
                                     .focusRequester(firstFocus)
@@ -312,7 +309,18 @@ fun <T : CardGridItem> CardGrid(
                                     onClickItem.invoke(index, item)
                                 }
                             },
-                            { if (item != null) onLongClickItem.invoke(index, item) },
+                            {
+                                if (item != null) {
+                                    onLongClickItem.invoke(index, item)
+                                    // Rapid focus toggle to force the UI to redraw the card instantly
+                                    scope.launch(ExceptionHandler()) {
+                                        val tempIndex = focusedIndex
+                                        focusedIndex = -2
+                                        delay(20)
+                                        focusedIndex = tempIndex
+                                    }
+                                }
+                            },
                             mod
                                 .ifElse(index == 0, Modifier.focusRequester(zeroFocus))
                                 .onFocusChanged { focusState ->
@@ -322,20 +330,14 @@ fun <T : CardGridItem> CardGrid(
                                         )
                                     }
                                     if (focusState.isFocused) {
-                                        // Focused, so set that up
                                         focusOn(index)
                                         positionCallback?.invoke(columns, index)
-                                    } else if (focusedIndex == index) {
-//                                        savedFocusedIndex = index
-//                                        // Was focused on this, so mark unfocused
-//                                        focusedIndex = -1
                                     }
                                 },
                         )
                     }
                 }
                 if (pager.isEmpty()) {
-//                focusedIndex = -1
                     Box(modifier = Modifier.fillMaxSize()) {
                         Text(
                             text = stringResource(R.string.no_results),
@@ -345,7 +347,6 @@ fun <T : CardGridItem> CardGrid(
                     }
                 }
                 if (showFooter) {
-                    // Footer
                     Box(
                         modifier =
                             Modifier
@@ -353,11 +354,6 @@ fun <T : CardGridItem> CardGrid(
                                 .background(AppColors.TransparentBlack50),
                     ) {
                         val index = (focusedIndex + 1).takeIf { it > 0 } ?: "?"
-//                        if (focusedIndex >= 0) {
-//                            focusedIndex + 1
-//                        } else {
-//                            max(savedFocusedIndex, focusedIndexOnExit) + 1
-//                        }
                         Text(
                             modifier = Modifier.padding(4.dp),
                             color = MaterialTheme.colorScheme.onBackground,
@@ -366,9 +362,8 @@ fun <T : CardGridItem> CardGrid(
                     }
                 }
             }
-            val context = LocalContext.current
-            val letters = context.getString(R.string.jump_letters)
-            // Letters
+
+            val letters = stringResource(R.string.jump_letters)
             val currentLetter =
                 remember(focusedIndex) {
                     pager
@@ -377,9 +372,9 @@ fun <T : CardGridItem> CardGrid(
                         ?.firstOrNull()
                         ?.uppercaseChar()
                         ?.let {
-                            if (it >= '0' && it <= '9') {
+                            if (it in '0'..'9') {
                                 '#'
-                            } else if (it >= 'A' && it <= 'Z') {
+                            } else if (it in 'A'..'Z') {
                                 it
                             } else {
                                 null
@@ -395,7 +390,6 @@ fun <T : CardGridItem> CardGrid(
                         Modifier
                             .align(Alignment.CenterVertically)
                             .padding(start = 16.dp),
-                    // Add end padding to push away from edge
                     letterClicked = { letter ->
                         scope.launch(ExceptionHandler()) {
                             val jumpPosition =
@@ -475,11 +469,8 @@ fun AlphabetButtons(
             }
         }
     }
-    // Focus & interaction states for each letter button
     val focusRequesters = remember { List(letters.length) { FocusRequester() } }
     val interactionSources = remember { List(letters.length) { MutableInteractionSource() } }
-
-    // Track if the entire alphabet picker component has focus
     var alphabetPickerFocused by remember { mutableStateOf(false) }
 
     LazyColumn(
@@ -504,7 +495,6 @@ fun AlphabetButtons(
             val focused by interactionSource.collectIsFocusedAsState()
 
             val isCurrentLetter = letters[index] == currentLetter
-            // Apply alpha to individual items, but keep selected letter fully visible when picker is unfocused
             val itemAlpha =
                 when {
                     isCurrentLetter && !alphabetPickerFocused -> 1f
@@ -512,8 +502,6 @@ fun AlphabetButtons(
                     else -> .25f
                 }
 
-            // Only show circle background for the current letter (or when focused)
-            // Wrap in Box with clipping to prevent focus indicator from overflowing
             Box(
                 modifier =
                     Modifier
@@ -526,17 +514,15 @@ fun AlphabetButtons(
                         Modifier
                             .size(14.dp)
                             .focusRequester(focusRequesters[index]),
-                    contentPadding = PaddingValues(0.dp), // No padding to maximize text space
+                    contentPadding = PaddingValues(0.dp),
                     interactionSource = interactionSource,
                     onClick = {
                         letterClicked.invoke(letters[index])
                     },
                     colors =
                         if (isCurrentLetter || focused) {
-                            // Use default button colors for current letter or focused
                             ButtonDefaults.colors()
                         } else {
-                            // Transparent background for non-current letters (no circle)
                             ButtonDefaults.colors(
                                 containerColor = Color.Transparent,
                                 contentColor = MaterialTheme.colorScheme.onSurface,
@@ -545,7 +531,6 @@ fun AlphabetButtons(
                             )
                         },
                 ) {
-                    // Use border color for selected letter when focused, tertiary for unfocused-selected
                     val color =
                         when {
                             isCurrentLetter && focused -> MaterialTheme.colorScheme.border

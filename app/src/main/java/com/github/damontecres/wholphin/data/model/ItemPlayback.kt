@@ -34,6 +34,7 @@ data class ItemPlayback(
     val sourceId: UUID? = null,
     val audioIndex: Int = TrackIndex.UNSPECIFIED,
     val subtitleIndex: Int = TrackIndex.UNSPECIFIED,
+    val videoIndex: Int? = null,
 ) {
     @Transient
     @Ignore

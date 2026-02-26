@@ -198,7 +198,7 @@ private fun ThemeExample(theme: AppThemeColors) {
                     ) {
                         navScope.apply {
                             NavItem(
-                                library = NavDrawerItem.Favorites,
+                                library = NavDrawerItem.Discover,
                                 onClick = { },
                                 selected = false,
                                 moreExpanded = false,
@@ -206,7 +206,7 @@ private fun ThemeExample(theme: AppThemeColors) {
                                 modifier = Modifier,
                             )
                             NavItem(
-                                library = NavDrawerItem.Favorites,
+                                library = NavDrawerItem.Discover,
                                 onClick = { },
                                 selected = false,
                                 moreExpanded = false,
@@ -222,7 +222,7 @@ private fun ThemeExample(theme: AppThemeColors) {
                     ) {
                         navScope.apply {
                             NavItem(
-                                library = NavDrawerItem.Favorites,
+                                library = NavDrawerItem.Discover,
                                 onClick = { },
                                 selected = true,
                                 moreExpanded = false,
@@ -230,7 +230,7 @@ private fun ThemeExample(theme: AppThemeColors) {
                                 modifier = Modifier,
                             )
                             NavItem(
-                                library = NavDrawerItem.Favorites,
+                                library = NavDrawerItem.Discover,
                                 onClick = { },
                                 selected = true,
                                 moreExpanded = false,

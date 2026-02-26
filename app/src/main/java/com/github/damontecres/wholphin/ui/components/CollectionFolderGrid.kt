@@ -111,339 +111,339 @@ import kotlin.time.Duration
 
 @HiltViewModel(assistedFactory = CollectionFolderViewModel.Factory::class)
 class CollectionFolderViewModel
-    @AssistedInject
-    constructor(
-        private val savedStateHandle: SavedStateHandle,
-        api: ApiClient,
-        @param:ApplicationContext private val context: Context,
-        private val serverRepository: ServerRepository,
-        private val libraryDisplayInfoDao: LibraryDisplayInfoDao,
-        private val favoriteWatchManager: FavoriteWatchManager,
-        private val backdropService: BackdropService,
-        val navigationManager: NavigationManager,
-        val mediaReportService: MediaReportService,
-        @Assisted itemId: String,
-        @Assisted initialSortAndDirection: SortAndDirection?,
-        @Assisted("recursive") private val recursive: Boolean,
-        @Assisted private val collectionFilter: CollectionFolderFilter,
-        @Assisted("useSeriesForPrimary") private val useSeriesForPrimary: Boolean,
-        @Assisted defaultViewOptions: ViewOptions,
-    ) : ItemViewModel(api) {
-        @AssistedFactory
-        interface Factory {
-            fun create(
-                itemId: String,
-                initialSortAndDirection: SortAndDirection?,
-                @Assisted("recursive") recursive: Boolean,
-                collectionFilter: CollectionFolderFilter,
-                @Assisted("useSeriesForPrimary") useSeriesForPrimary: Boolean,
-                defaultViewOptions: ViewOptions,
-            ): CollectionFolderViewModel
+@AssistedInject
+constructor(
+    private val savedStateHandle: SavedStateHandle,
+    api: ApiClient,
+    @param:ApplicationContext private val context: Context,
+    private val serverRepository: ServerRepository,
+    private val libraryDisplayInfoDao: LibraryDisplayInfoDao,
+    private val favoriteWatchManager: FavoriteWatchManager,
+    private val backdropService: BackdropService,
+    val navigationManager: NavigationManager,
+    val mediaReportService: MediaReportService,
+    @Assisted itemId: String,
+    @Assisted initialSortAndDirection: SortAndDirection?,
+    @Assisted("recursive") private val recursive: Boolean,
+    @Assisted private val collectionFilter: CollectionFolderFilter,
+    @Assisted("useSeriesForPrimary") private val useSeriesForPrimary: Boolean,
+    @Assisted defaultViewOptions: ViewOptions,
+) : ItemViewModel(api) {
+    @AssistedFactory
+    interface Factory {
+        fun create(
+            itemId: String,
+            initialSortAndDirection: SortAndDirection?,
+            @Assisted("recursive") recursive: Boolean,
+            collectionFilter: CollectionFolderFilter,
+            @Assisted("useSeriesForPrimary") useSeriesForPrimary: Boolean,
+            defaultViewOptions: ViewOptions,
+        ): CollectionFolderViewModel
+    }
+
+    val loading = MutableLiveData<DataLoadingState<List<BaseItem?>>>(DataLoadingState.Loading)
+    val backgroundLoading = MutableLiveData<LoadingState>(LoadingState.Loading)
+    val sortAndDirection = MutableLiveData<SortAndDirection>()
+    val filter = MutableLiveData<GetItemsFilter>(GetItemsFilter())
+    val viewOptions = MutableLiveData<ViewOptions>()
+
+    var position: Int
+        get() = savedStateHandle.get<Int>("position") ?: 0
+        set(value) {
+            savedStateHandle["position"] = value
         }
 
-        val loading = MutableLiveData<DataLoadingState<List<BaseItem?>>>(DataLoadingState.Loading)
-        val backgroundLoading = MutableLiveData<LoadingState>(LoadingState.Loading)
-        val sortAndDirection = MutableLiveData<SortAndDirection>()
-        val filter = MutableLiveData<GetItemsFilter>(GetItemsFilter())
-        val viewOptions = MutableLiveData<ViewOptions>()
+    init {
+        viewModelScope.launchIO {
+            super.itemId = itemId
+            try {
+                itemId.toUUIDOrNull()?.let {
+                    fetchItem(it)
+                }
 
-        var position: Int
-            get() = savedStateHandle.get<Int>("position") ?: 0
-            set(value) {
-                savedStateHandle["position"] = value
-            }
-
-        init {
-            viewModelScope.launchIO {
-                super.itemId = itemId
-                try {
-                    itemId.toUUIDOrNull()?.let {
-                        fetchItem(it)
+                val libraryDisplayInfo =
+                    serverRepository.currentUser.value?.let { user ->
+                        libraryDisplayInfoDao.getItem(user, itemId)
                     }
-
-                    val libraryDisplayInfo =
-                        serverRepository.currentUser.value?.let { user ->
-                            libraryDisplayInfoDao.getItem(user, itemId)
-                        }
-                    this@CollectionFolderViewModel.viewOptions.setValueOnMain(
-                        libraryDisplayInfo?.viewOptions ?: defaultViewOptions,
-                    )
-
-                    val sortAndDirection =
-                        if (collectionFilter.useSavedLibraryDisplayInfo) {
-                            libraryDisplayInfo?.sortAndDirection
-                        } else {
-                            null
-                        } ?: initialSortAndDirection ?: SortAndDirection.DEFAULT
-
-                    val filterToUse =
-                        if (collectionFilter.useSavedLibraryDisplayInfo && libraryDisplayInfo?.filter != null) {
-                            collectionFilter.filter.merge(libraryDisplayInfo.filter)
-                        } else {
-                            collectionFilter.filter
-                        }
-
-                    loadResults(true, sortAndDirection, recursive, filterToUse, useSeriesForPrimary)
-                } catch (ex: Exception) {
-                    Timber.e(ex, "Error during init")
-                    loading.setValueOnMain(DataLoadingState.Error(ex))
-                }
-            }
-        }
-
-        private fun saveLibraryDisplayInfo(
-            newFilter: GetItemsFilter = this.filter.value!!,
-            newSort: SortAndDirection = this.sortAndDirection.value!!,
-            viewOptions: ViewOptions? = this.viewOptions.value,
-        ) {
-            if (collectionFilter.useSavedLibraryDisplayInfo) {
-                serverRepository.currentUser.value?.let { user ->
-                    viewModelScope.launchIO {
-                        val libraryDisplayInfo =
-                            LibraryDisplayInfo(
-                                userId = user.rowId,
-                                itemId = itemId,
-                                sort = newSort.sort,
-                                direction = newSort.direction,
-                                filter = newFilter,
-                                viewOptions = viewOptions,
-                            )
-                        libraryDisplayInfoDao.saveItem(libraryDisplayInfo)
-                    }
-                }
-            }
-        }
-
-        fun saveViewOptions(viewOptions: ViewOptions) {
-            this.viewOptions.value = viewOptions
-            viewModelScope.launch(ExceptionHandler() + Dispatchers.IO) {
-                saveLibraryDisplayInfo(viewOptions = viewOptions)
-                if (!viewOptions.showDetails) {
-                    backdropService.clearBackdrop()
-                }
-            }
-        }
-
-        fun onFilterChange(
-            newFilter: GetItemsFilter,
-            recursive: Boolean,
-        ) {
-            Timber.v("onFilterChange: filter=%s", newFilter)
-            saveLibraryDisplayInfo(newFilter, sortAndDirection.value!!)
-            loadResults(false, sortAndDirection.value!!, recursive, newFilter, useSeriesForPrimary)
-        }
-
-        fun onSortChange(
-            sortAndDirection: SortAndDirection,
-            recursive: Boolean,
-            filter: GetItemsFilter,
-        ) {
-            Timber.v(
-                "onSortChange: sort=%s, recursive=%s, filter=%s",
-                sortAndDirection,
-                recursive,
-                filter,
-            )
-            saveLibraryDisplayInfo(filter, sortAndDirection)
-            loadResults(true, sortAndDirection, recursive, filter, useSeriesForPrimary)
-        }
-
-        private fun loadResults(
-            resetState: Boolean,
-            sortAndDirection: SortAndDirection,
-            recursive: Boolean,
-            filter: GetItemsFilter,
-            useSeriesForPrimary: Boolean,
-        ) {
-            viewModelScope.launch(Dispatchers.IO) {
-                withContext(Dispatchers.Main) {
-                    if (resetState) {
-                        loading.value = DataLoadingState.Loading
-                    }
-                    backgroundLoading.value = LoadingState.Loading
-                    this@CollectionFolderViewModel.sortAndDirection.value = sortAndDirection
-                    this@CollectionFolderViewModel.filter.value = filter
-                }
-                try {
-                    val newPager =
-                        createPager(sortAndDirection, recursive, filter, useSeriesForPrimary).init()
-                    if (newPager.isNotEmpty()) newPager.getBlocking(0)
-                    withContext(Dispatchers.Main) {
-                        loading.value = DataLoadingState.Success(newPager)
-                        backgroundLoading.value = LoadingState.Success
-                    }
-                } catch (ex: Exception) {
-                    Timber.e(
-                        ex,
-                        "Exception while loading data: sort=%s, filter=%s",
-                        sortAndDirection,
-                        filter,
-                    )
-                    withContext(Dispatchers.Main) {
-                        loading.value = DataLoadingState.Error(ex)
-                    }
-                }
-            }
-        }
-
-        private fun createPager(
-            sortAndDirection: SortAndDirection,
-            recursive: Boolean,
-            filter: GetItemsFilter,
-            useSeriesForPrimary: Boolean,
-        ): ApiRequestPager<out Any> =
-            when (filter.override) {
-                GetItemsFilterOverride.NONE -> {
-                    val request =
-                        createGetItemsRequest(
-                            sortAndDirection = sortAndDirection,
-                            recursive = recursive,
-                            filter = filter,
-                        )
-                    val newPager =
-                        ApiRequestPager(
-                            api,
-                            request,
-                            GetItemsRequestHandler,
-                            viewModelScope,
-                            useSeriesForPrimary = useSeriesForPrimary,
-                        )
-                    newPager
-                }
-
-                GetItemsFilterOverride.PERSON -> {
-                    val request =
-                        filter.applyTo(
-                            GetPersonsRequest(
-                                enableImageTypes = listOf(ImageType.PRIMARY, ImageType.THUMB),
-                            ),
-                        )
-                    val newPager =
-                        ApiRequestPager(
-                            api,
-                            request,
-                            GetPersonsHandler,
-                            viewModelScope,
-                            useSeriesForPrimary = useSeriesForPrimary,
-                        )
-                    newPager
-                }
-            }
-
-        private fun createGetItemsRequest(
-            sortAndDirection: SortAndDirection,
-            recursive: Boolean,
-            filter: GetItemsFilter,
-        ): GetItemsRequest {
-            val item = item.value
-            val includeItemTypes =
-                item
-                    ?.data
-                    ?.collectionType
-                    ?.baseItemKinds
-                    .orEmpty()
-            val request =
-                filter.applyTo(
-                    GetItemsRequest(
-                        parentId = item?.id,
-                        enableImageTypes =
-                            listOf(
-                                ImageType.PRIMARY,
-                                ImageType.THUMB,
-                                ImageType.BACKDROP,
-                            ),
-                        includeItemTypes = includeItemTypes,
-                        recursive = recursive,
-                        excludeItemIds = item?.let { listOf(item.id) },
-                        sortBy =
-                            buildList {
-                                if (sortAndDirection.sort != ItemSortBy.DEFAULT) {
-                                    add(sortAndDirection.sort)
-                                    if (sortAndDirection.sort != ItemSortBy.SORT_NAME) {
-                                        add(ItemSortBy.SORT_NAME)
-                                    }
-                                    if (item?.data?.collectionType == CollectionType.MOVIES) {
-                                        add(ItemSortBy.PRODUCTION_YEAR)
-                                    }
-                                }
-                            },
-                        sortOrder =
-                            buildList {
-                                if (sortAndDirection.sort != ItemSortBy.DEFAULT) {
-                                    add(sortAndDirection.direction)
-                                    if (sortAndDirection.sort != ItemSortBy.SORT_NAME) {
-                                        add(SortOrder.ASCENDING)
-                                    }
-                                    if (item?.data?.collectionType == CollectionType.MOVIES) {
-                                        add(SortOrder.ASCENDING)
-                                    }
-                                }
-                            },
-                        fields = SlimItemFields,
-                    ),
+                this@CollectionFolderViewModel.viewOptions.setValueOnMain(
+                    libraryDisplayInfo?.viewOptions ?: defaultViewOptions,
                 )
-            return request
-        }
 
-        suspend fun getFilterOptionValues(filterOption: ItemFilterBy<*>): List<FilterValueOption> =
-            FilterUtils.getFilterOptionValues(
-                api,
-                serverRepository.currentUser.value?.id,
-                itemUuid,
-                filterOption,
-            )
+                val sortAndDirection =
+                    if (collectionFilter.useSavedLibraryDisplayInfo) {
+                        libraryDisplayInfo?.sortAndDirection
+                    } else {
+                        null
+                    } ?: initialSortAndDirection ?: SortAndDirection.DEFAULT
 
-        suspend fun positionOfLetter(letter: Char): Int? =
-            withContext(Dispatchers.IO) {
-                val sort = sortAndDirection.value
-                val filter = filter.value
-                if (sort == null || filter == null) {
-                    return@withContext null
-                }
-                val request =
-                    createGetItemsRequest(
-                        sortAndDirection = sort,
-                        recursive = recursive,
-                        filter = filter,
-                    ).copy(
-                        enableImageTypes = null,
-                        fields = null,
-                        nameLessThan = letter.toString(),
-                        limit = 0,
-                        enableTotalRecordCount = true,
-                    )
-                val result by GetItemsRequestHandler.execute(api, request)
-                result.totalRecordCount
-            }
+                val filterToUse =
+                    if (collectionFilter.useSavedLibraryDisplayInfo && libraryDisplayInfo?.filter != null) {
+                        collectionFilter.filter.merge(libraryDisplayInfo.filter)
+                    } else {
+                        collectionFilter.filter
+                    }
 
-        fun setWatched(
-            position: Int,
-            itemId: UUID,
-            played: Boolean,
-        ) = viewModelScope.launch(ExceptionHandler() + Dispatchers.IO) {
-            favoriteWatchManager.setWatched(itemId, played)
-            (loading.value as? DataLoadingState.Success)?.let {
-                (it.data as? ApiRequestPager<*>)?.refreshItem(position, itemId)
-            }
-        }
-
-        fun setFavorite(
-            position: Int,
-            itemId: UUID,
-            favorite: Boolean,
-        ) = viewModelScope.launch(ExceptionHandler() + Dispatchers.IO) {
-            favoriteWatchManager.setFavorite(itemId, favorite)
-            (loading.value as? DataLoadingState.Success)?.let {
-                (it.data as? ApiRequestPager<*>)?.refreshItem(position, itemId)
-            }
-        }
-
-        fun updateBackdrop(item: BaseItem) {
-            viewModelScope.launchIO {
-                backdropService.submit(item)
+                loadResults(true, sortAndDirection, recursive, filterToUse, useSeriesForPrimary)
+            } catch (ex: Exception) {
+                Timber.e(ex, "Error during init")
+                loading.setValueOnMain(DataLoadingState.Error(ex))
             }
         }
     }
+
+    private fun saveLibraryDisplayInfo(
+        newFilter: GetItemsFilter = this.filter.value!!,
+        newSort: SortAndDirection = this.sortAndDirection.value!!,
+        viewOptions: ViewOptions? = this.viewOptions.value,
+    ) {
+        if (collectionFilter.useSavedLibraryDisplayInfo) {
+            serverRepository.currentUser.value?.let { user ->
+                viewModelScope.launchIO {
+                    val libraryDisplayInfo =
+                        LibraryDisplayInfo(
+                            userId = user.rowId,
+                            itemId = itemId,
+                            sort = newSort.sort,
+                            direction = newSort.direction,
+                            filter = newFilter,
+                            viewOptions = viewOptions,
+                        )
+                    libraryDisplayInfoDao.saveItem(libraryDisplayInfo)
+                }
+            }
+        }
+    }
+
+    fun saveViewOptions(viewOptions: ViewOptions) {
+        this.viewOptions.value = viewOptions
+        viewModelScope.launch(ExceptionHandler() + Dispatchers.IO) {
+            saveLibraryDisplayInfo(viewOptions = viewOptions)
+            if (!viewOptions.showDetails) {
+                backdropService.clearBackdrop()
+            }
+        }
+    }
+
+    fun onFilterChange(
+        newFilter: GetItemsFilter,
+        recursive: Boolean,
+    ) {
+        Timber.v("onFilterChange: filter=%s", newFilter)
+        saveLibraryDisplayInfo(newFilter, sortAndDirection.value!!)
+        loadResults(false, sortAndDirection.value!!, recursive, newFilter, useSeriesForPrimary)
+    }
+
+    fun onSortChange(
+        sortAndDirection: SortAndDirection,
+        recursive: Boolean,
+        filter: GetItemsFilter,
+    ) {
+        Timber.v(
+            "onSortChange: sort=%s, recursive=%s, filter=%s",
+            sortAndDirection,
+            recursive,
+            filter,
+        )
+        saveLibraryDisplayInfo(filter, sortAndDirection)
+        loadResults(true, sortAndDirection, recursive, filter, useSeriesForPrimary)
+    }
+
+    private fun loadResults(
+        resetState: Boolean,
+        sortAndDirection: SortAndDirection,
+        recursive: Boolean,
+        filter: GetItemsFilter,
+        useSeriesForPrimary: Boolean,
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            withContext(Dispatchers.Main) {
+                if (resetState) {
+                    loading.value = DataLoadingState.Loading
+                }
+                backgroundLoading.value = LoadingState.Loading
+                this@CollectionFolderViewModel.sortAndDirection.value = sortAndDirection
+                this@CollectionFolderViewModel.filter.value = filter
+            }
+            try {
+                val newPager =
+                    createPager(sortAndDirection, recursive, filter, useSeriesForPrimary).init()
+                if (newPager.isNotEmpty()) newPager.getBlocking(0)
+                withContext(Dispatchers.Main) {
+                    loading.value = DataLoadingState.Success(newPager)
+                    backgroundLoading.value = LoadingState.Success
+                }
+            } catch (ex: Exception) {
+                Timber.e(
+                    ex,
+                    "Exception while loading data: sort=%s, filter=%s",
+                    sortAndDirection,
+                    filter,
+                )
+                withContext(Dispatchers.Main) {
+                    loading.value = DataLoadingState.Error(ex)
+                }
+            }
+        }
+    }
+
+    private fun createPager(
+        sortAndDirection: SortAndDirection,
+        recursive: Boolean,
+        filter: GetItemsFilter,
+        useSeriesForPrimary: Boolean,
+    ): ApiRequestPager<out Any> =
+        when (filter.override) {
+            GetItemsFilterOverride.NONE -> {
+                val request =
+                    createGetItemsRequest(
+                        sortAndDirection = sortAndDirection,
+                        recursive = recursive,
+                        filter = filter,
+                    )
+                val newPager =
+                    ApiRequestPager(
+                        api,
+                        request,
+                        GetItemsRequestHandler,
+                        viewModelScope,
+                        useSeriesForPrimary = useSeriesForPrimary,
+                    )
+                newPager
+            }
+
+            GetItemsFilterOverride.PERSON -> {
+                val request =
+                    filter.applyTo(
+                        GetPersonsRequest(
+                            enableImageTypes = listOf(ImageType.PRIMARY, ImageType.THUMB),
+                        ),
+                    )
+                val newPager =
+                    ApiRequestPager(
+                        api,
+                        request,
+                        GetPersonsHandler,
+                        viewModelScope,
+                        useSeriesForPrimary = useSeriesForPrimary,
+                    )
+                newPager
+            }
+        }
+
+    private fun createGetItemsRequest(
+        sortAndDirection: SortAndDirection,
+        recursive: Boolean,
+        filter: GetItemsFilter,
+    ): GetItemsRequest {
+        val item = item.value
+        val includeItemTypes =
+            item
+                ?.data
+                ?.collectionType
+                ?.baseItemKinds
+                .orEmpty()
+        val request =
+            filter.applyTo(
+                GetItemsRequest(
+                    parentId = item?.id,
+                    enableImageTypes =
+                        listOf(
+                            ImageType.PRIMARY,
+                            ImageType.THUMB,
+                            ImageType.BACKDROP,
+                        ),
+                    includeItemTypes = includeItemTypes,
+                    recursive = recursive,
+                    excludeItemIds = item?.let { listOf(item.id) },
+                    sortBy =
+                        buildList {
+                            if (sortAndDirection.sort != ItemSortBy.DEFAULT) {
+                                add(sortAndDirection.sort)
+                                if (sortAndDirection.sort != ItemSortBy.SORT_NAME) {
+                                    add(ItemSortBy.SORT_NAME)
+                                }
+                                if (item?.data?.collectionType == CollectionType.MOVIES) {
+                                    add(ItemSortBy.PRODUCTION_YEAR)
+                                }
+                            }
+                        },
+                    sortOrder =
+                        buildList {
+                            if (sortAndDirection.sort != ItemSortBy.DEFAULT) {
+                                add(sortAndDirection.direction)
+                                if (sortAndDirection.sort != ItemSortBy.SORT_NAME) {
+                                    add(SortOrder.ASCENDING)
+                                }
+                                if (item?.data?.collectionType == CollectionType.MOVIES) {
+                                    add(SortOrder.ASCENDING)
+                                }
+                            }
+                        },
+                    fields = SlimItemFields,
+                ),
+            )
+        return request
+    }
+
+    suspend fun getFilterOptionValues(filterOption: ItemFilterBy<*>): List<FilterValueOption> =
+        FilterUtils.getFilterOptionValues(
+            api,
+            serverRepository.currentUser.value?.id,
+            itemUuid,
+            filterOption,
+        )
+
+    suspend fun positionOfLetter(letter: Char): Int? =
+        withContext(Dispatchers.IO) {
+            val sort = sortAndDirection.value
+            val filter = filter.value
+            if (sort == null || filter == null) {
+                return@withContext null
+            }
+            val request =
+                createGetItemsRequest(
+                    sortAndDirection = sort,
+                    recursive = recursive,
+                    filter = filter,
+                ).copy(
+                    enableImageTypes = null,
+                    fields = null,
+                    nameLessThan = letter.toString(),
+                    limit = 0,
+                    enableTotalRecordCount = true,
+                )
+            val result by GetItemsRequestHandler.execute(api, request)
+            result.totalRecordCount
+        }
+
+    fun setWatched(
+        position: Int,
+        itemId: UUID,
+        played: Boolean,
+    ) = viewModelScope.launch(ExceptionHandler() + Dispatchers.IO) {
+        favoriteWatchManager.setWatched(itemId, played)
+        (loading.value as? DataLoadingState.Success)?.let {
+            (it.data as? ApiRequestPager<*>)?.refreshItem(position, itemId)
+        }
+    }
+
+    fun setFavorite(
+        position: Int,
+        itemId: UUID,
+        favorite: Boolean,
+    ) = viewModelScope.launch(ExceptionHandler() + Dispatchers.IO) {
+        favoriteWatchManager.setFavorite(itemId, favorite)
+        (loading.value as? DataLoadingState.Success)?.let {
+            (it.data as? ApiRequestPager<*>)?.refreshItem(position, itemId)
+        }
+    }
+
+    fun updateBackdrop(item: BaseItem) {
+        viewModelScope.launchIO {
+            backdropService.submit(item)
+        }
+    }
+}
 
 /**
  * Shows a collection folder as a grid
@@ -535,13 +535,13 @@ fun CollectionFolderGrid(
     when (val state = loading) {
         DataLoadingState.Loading,
         DataLoadingState.Pending,
-        -> {
+            -> {
             LoadingPage(modifier)
         }
 
         is DataLoadingState.Error,
         is DataLoadingState.Success<*>,
-        -> {
+            -> {
             val title =
                 initialFilter.nameOverride
                     ?: item?.name
@@ -558,8 +558,10 @@ fun CollectionFolderGrid(
                     modifier = Modifier.fillMaxSize(),
                     focusRequesterOnEmpty = focusRequesterOnEmpty,
                     onClickItem = onClickItem,
-                    onLongClickItem = { position, item ->
-                        moreDialog.makePresent(PositionItem(position, item))
+                    onLongClickItem = { position, baseItem ->
+                        // THE FIX: Bypassing the dialog entirely and favoriting the item instantly
+                        val newFavoriteStatus = !baseItem.favorite
+                        viewModel.setFavorite(position, baseItem.id, newFavoriteStatus)
                     },
                     onSortChange = {
                         viewModel.onSortChange(it, recursive, filter)
@@ -855,7 +857,7 @@ fun CollectionFolderGridContent(
             when (val state = loadingState) {
                 DataLoadingState.Pending,
                 DataLoadingState.Loading,
-                -> {
+                    -> {
                     // This shouldn't happen, so just show placeholder
                     Text("Loading")
                 }

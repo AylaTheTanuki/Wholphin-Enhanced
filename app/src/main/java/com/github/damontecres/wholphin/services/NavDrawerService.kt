@@ -118,7 +118,7 @@ class NavDrawerService
             user: JellyfinUser,
             userDto: UserDto,
         ) {
-            val builtins = listOf(NavDrawerItem.Favorites, NavDrawerItem.Discover)
+            val builtins = listOf(NavDrawerItem.Discover)
             val allLibraries = getAllUserLibraries(user.id, userDto.tvAccess)
             val libraries =
                 allLibraries

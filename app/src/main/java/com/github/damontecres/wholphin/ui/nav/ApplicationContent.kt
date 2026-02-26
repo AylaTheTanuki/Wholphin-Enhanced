@@ -21,6 +21,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -83,6 +84,7 @@ fun ApplicationContent(
     preferences: UserPreferences,
     modifier: Modifier = Modifier,
     enableTopScrim: Boolean = true,
+    onInteraction: () -> Unit = {},
     viewModel: ApplicationContentViewModel = hiltViewModel(),
 ) {
     val backStack: MutableList<NavKey> =
@@ -98,7 +100,10 @@ fun ApplicationContent(
     val backdropStyle = preferences.appPreferences.interfacePreferences.backdropStyle
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     Box(
-        modifier = modifier,
+        modifier = modifier.onKeyEvent { 
+            onInteraction()
+            false 
+        },
     ) {
         val baseBackgroundColor = MaterialTheme.colorScheme.background
         if (backdrop.hasColors &&

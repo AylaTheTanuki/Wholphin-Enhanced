@@ -31,6 +31,7 @@ import com.github.damontecres.wholphin.ui.detail.movie.MovieDetails
 import com.github.damontecres.wholphin.ui.detail.series.SeriesDetails
 import com.github.damontecres.wholphin.ui.detail.series.SeriesOverview
 import com.github.damontecres.wholphin.ui.discover.DiscoverPage
+import com.github.damontecres.wholphin.ui.main.AmbientScreensaver
 import com.github.damontecres.wholphin.ui.main.HomePage
 import com.github.damontecres.wholphin.ui.main.SearchPage
 import com.github.damontecres.wholphin.ui.main.settings.HomeSettingsPage
@@ -259,14 +260,6 @@ fun DestinationContent(
             )
         }
 
-        Destination.Favorites -> {
-            LaunchedEffect(Unit) { onClearBackdrop.invoke() }
-            FavoritesPage(
-                preferences = preferences,
-                modifier = modifier,
-            )
-        }
-
         Destination.UpdateApp -> {
             InstallUpdatePage(preferences, modifier)
         }
@@ -327,6 +320,10 @@ fun DestinationContent(
                     )
                 }
             }
+        }
+
+        Destination.AmbientScreensaver -> {
+            AmbientScreensaver()
         }
     }
 }

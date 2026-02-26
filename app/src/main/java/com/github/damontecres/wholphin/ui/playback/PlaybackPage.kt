@@ -5,6 +5,8 @@ import androidx.annotation.Dimension
 import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
@@ -174,6 +176,8 @@ fun PlaybackPageContent(
     val subtitleSearchLanguage by viewModel.subtitleSearchLanguage.observeAsState(Locale.current.language)
 
     var playbackDialog by remember { mutableStateOf<PlaybackDialogType?>(null) }
+    // We create a live UI variable that starts with the old data, but can be updated!
+    var currentMaxBitrate by remember { mutableLongStateOf(preferences.appPreferences.playbackPreferences.maxBitrate) }
     LaunchedEffect(player) {
         if (playerBackend == PlayerBackend.MPV) {
             scope.launch(Dispatchers.IO + ExceptionHandler()) {
@@ -216,6 +220,20 @@ fun PlaybackPageContent(
     }
     val controllerViewState = remember { viewModel.controllerViewState }
 
+    // Burn-in Protection State
+    var isDimmed by remember { mutableStateOf(false) }
+    val dimOpacity by animateFloatAsState(if (isDimmed) 0.8f else 0f, label = "burn_in_dim")
+    val burnInTimeout = 2 * 60 * 1000L // 2 minutes
+
+    LaunchedEffect(player.isPlaying, player.playbackState) {
+        if (!player.isPlaying && player.playbackState == Player.STATE_READY) {
+            delay(burnInTimeout)
+            isDimmed = true
+        } else {
+            isDimmed = false
+        }
+    }
+
     var skipIndicatorDuration by remember { mutableLongStateOf(0L) }
     LaunchedEffect(controllerViewState.controlsVisible) {
         // If controller shows/hides, immediately cancel the skip indicator
@@ -239,8 +257,11 @@ fun PlaybackPageContent(
             controllerViewState = controllerViewState,
             updateSkipIndicator = updateSkipIndicator,
             skipBackOnResume = preferences.appPreferences.playbackPreferences.skipBackOnResume,
-            onInteraction = viewModel::reportInteraction,
-            oneClickPause = preferences.appPreferences.playbackPreferences.oneClickPause,
+            onInteraction = {
+                isDimmed = false
+                viewModel.reportInteraction()
+            },
+            oneClickPause = true,
             onStop = {
                 player.stop()
                 viewModel.navigationManager.goBack()
@@ -276,6 +297,20 @@ fun PlaybackPageContent(
 
             is PlaybackAction.ToggleCaptions -> {
                 viewModel.changeSubtitleStream(it.index)
+            }
+
+            is PlaybackAction.ToggleVideoQuality -> {
+                // Ignore this, we are using SetMaxBitrate now
+            }
+
+            is PlaybackAction.SetMaxBitrate -> {
+                val currentPos = player.currentPosition
+
+                // 1. THIS IS THE MAGIC: Instantly update the UI's live memory!
+                currentMaxBitrate = it.bitrate?.toLong() ?: 120000000L
+
+                player.stop()
+                viewModel.setBitrateAndReload(it.bitrate, currentPos)
             }
 
             PlaybackAction.SearchCaptions -> {
@@ -316,7 +351,10 @@ fun PlaybackPageContent(
                 Modifier
                     .fillMaxSize(playerSize)
                     .align(Alignment.TopCenter)
-                    .onKeyEvent(keyHandler::onKeyEvent)
+                    .onKeyEvent {
+                        isDimmed = false
+                        keyHandler.onKeyEvent(it)
+                    }
                     .focusRequester(focusRequester)
                     .focusable(),
         ) {
@@ -333,6 +371,11 @@ fun PlaybackPageContent(
                 ) {
                     LoadingPage(focusEnabled = false)
                 }
+            }
+
+            // Burn-in Protection Overlay
+            if (dimOpacity > 0f) {
+                Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = dimOpacity)))
             }
 
             // If D-pad skipping, show the amount skipped in an animation
@@ -584,6 +627,7 @@ fun PlaybackPageContent(
     playbackDialog?.let { type ->
         PlaybackDialog(
             type = type,
+            syncPlayManager = viewModel.syncPlayManager, // <--- ADD THIS LINE RIGHT HERE!
             settings =
                 PlaybackSettings(
                     showDebugInfo = showDebugInfo,
@@ -591,6 +635,9 @@ fun PlaybackPageContent(
                     audioStreams = mediaInfo?.audioStreams.orEmpty(),
                     subtitleIndex = currentItemPlayback?.subtitleIndex,
                     subtitleStreams = mediaInfo?.subtitleStreams.orEmpty(),
+                    videoStreams = mediaInfo?.videoStreams.orEmpty(),
+                    currentVideoIndex = currentItemPlayback?.videoIndex,
+                    maxBitrate = currentMaxBitrate,
                     playbackSpeed = playbackSpeed,
                     contentScale = contentScale,
                     subtitleDelay = subtitleDelay,

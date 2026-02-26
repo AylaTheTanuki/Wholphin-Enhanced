@@ -119,9 +119,6 @@ sealed class Destination(
     ) : Destination(true)
 
     @Serializable
-    data object Favorites : Destination(false)
-
-    @Serializable
     data object Discover : Destination(false)
 
     @Serializable
@@ -137,4 +134,7 @@ sealed class Destination(
 
     @Serializable
     data object Debug : Destination(true)
+
+    @Serializable
+    data object AmbientScreensaver : Destination(true)
 }

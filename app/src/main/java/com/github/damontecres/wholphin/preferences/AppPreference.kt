@@ -363,7 +363,7 @@ sealed interface AppPreference<Pref, T> {
             )
 
         const val MEGA_BIT = 1024 * 1024L
-        const val DEFAULT_BITRATE = 100 * MEGA_BIT
+        const val DEFAULT_BITRATE = 200 * MEGA_BIT
         private val bitrateValues =
             listOf(
                 500 * 1024L,
@@ -744,7 +744,7 @@ sealed interface AppPreference<Pref, T> {
         val OneClickPause =
             AppSwitchPreference<AppPreferences>(
                 title = R.string.one_click_pause,
-                defaultValue = false,
+                defaultValue = true,
                 getter = { it.playbackPreferences.oneClickPause },
                 setter = { prefs, value ->
                     prefs.updatePlaybackPreferences { oneClickPause = value }

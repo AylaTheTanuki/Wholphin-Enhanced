@@ -11,13 +11,14 @@ import org.jellyfin.sdk.model.extensions.ticks
 data class CurrentMediaInfo(
     val sourceId: String?,
     val videoStream: SimpleVideoStream?,
+    val videoStreams: List<SimpleMediaStream>,
     val audioStreams: List<SimpleMediaStream>,
     val subtitleStreams: List<SimpleMediaStream>,
     val chapters: List<Chapter>,
     val trickPlayInfo: TrickplayInfo?,
 ) {
     companion object {
-        val EMPTY = CurrentMediaInfo(null, null, listOf(), listOf(), listOf(), null)
+        val EMPTY = CurrentMediaInfo(null, null, listOf(), listOf(), listOf(), listOf(), null)
     }
 }
 

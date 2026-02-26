@@ -36,6 +36,7 @@ import com.github.damontecres.wholphin.ui.AspectRatios
 import com.github.damontecres.wholphin.ui.enableMarquee
 import com.github.damontecres.wholphin.ui.seasonEpisode
 import kotlinx.coroutines.delay
+import org.jellyfin.sdk.model.api.BaseItemKind
 
 @Composable
 fun EpisodeCard(
@@ -66,9 +67,18 @@ fun EpisodeCard(
     } else {
         focusedAfterDelay = false
     }
-    val aspectRatio = item?.aspectRatio?.coerceAtLeast(AspectRatios.MIN) ?: AspectRatios.MIN
+
+    // THE FIX: Smart Aspect Ratio Override!
+    val baseAspectRatio = item?.aspectRatio?.coerceAtLeast(AspectRatios.MIN) ?: AspectRatios.MIN
+    val ticks = dto?.userData?.playbackPositionTicks ?: 0L
+    val isInterceptedEpisode = item?.type == BaseItemKind.EPISODE && ticks > 0L
+
+    // Force 16:9 (WIDE) if it's an episode in progress, otherwise fall back to the default
+    val aspectRatio = if (isInterceptedEpisode) (16f / 9f) else baseAspectRatio
+
     val width = imageHeight * aspectRatio
     val height = imageWidth * (1f / aspectRatio)
+
     Column(
         verticalArrangement = Arrangement.spacedBy(spaceBetween),
         modifier = modifier.size(width, height),

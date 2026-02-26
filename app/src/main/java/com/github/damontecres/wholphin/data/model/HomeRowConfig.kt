@@ -111,6 +111,17 @@ sealed interface HomeRowConfig {
     }
 
     /**
+     * Combined favorites (Movies and Shows)
+     */
+    @Serializable
+    @SerialName("MyList")
+    data class MyList(
+        override val viewOptions: HomeRowViewOptions = HomeRowViewOptions(),
+    ) : HomeRowConfig {
+        override fun updateViewOptions(viewOptions: HomeRowViewOptions): MyList = this.copy(viewOptions = viewOptions)
+    }
+
+    /**
      * Currently recording
      */
     @Serializable

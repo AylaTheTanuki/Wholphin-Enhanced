@@ -54,12 +54,11 @@ fun FavoritesPage(
     modifier: Modifier = Modifier,
     preferencesViewModel: PreferencesViewModel = hiltViewModel(),
 ) {
-    val uiPrefs = preferences.appPreferences.interfacePreferences
     val rememberedTabIndex =
         remember {
             preferencesViewModel.getRememberedTab(
                 preferences,
-                NavDrawerItem.Favorites.id,
+                "a_favorites",
                 0,
             )
         }
@@ -81,7 +80,7 @@ fun FavoritesPage(
         logTab("favorites", selectedTabIndex)
         preferencesViewModel.saveRememberedTab(
             preferences,
-            NavDrawerItem.Favorites.id,
+            "a_favorites",
             selectedTabIndex,
         )
         preferencesViewModel.backdropService.clearBackdrop()
@@ -118,7 +117,7 @@ fun FavoritesPage(
                 CollectionFolderGrid(
                     preferences = preferences,
                     onClickItem = { _, item -> onClickItem.invoke(item) },
-                    itemId = "${NavDrawerItem.Favorites.id}_movies",
+                    itemId = "a_favorites_movies",
                     initialFilter =
                         CollectionFolderFilter(
                             filter =
@@ -150,7 +149,7 @@ fun FavoritesPage(
                 CollectionFolderGrid(
                     preferences = preferences,
                     onClickItem = { _, item -> onClickItem.invoke(item) },
-                    itemId = "${NavDrawerItem.Favorites.id}_series",
+                    itemId = "a_favorites_series",
                     initialFilter =
                         CollectionFolderFilter(
                             filter =
@@ -182,7 +181,7 @@ fun FavoritesPage(
                 CollectionFolderGrid(
                     preferences = preferences,
                     onClickItem = { _, item -> onClickItem.invoke(item) },
-                    itemId = "${NavDrawerItem.Favorites.id}_episodes",
+                    itemId = "a_favorites_episodes",
                     initialFilter =
                         CollectionFolderFilter(
                             filter =
@@ -215,7 +214,7 @@ fun FavoritesPage(
                 CollectionFolderGrid(
                     preferences = preferences,
                     onClickItem = { _, item -> onClickItem.invoke(item) },
-                    itemId = "${NavDrawerItem.Favorites.id}_videos",
+                    itemId = "a_favorites_videos",
                     initialFilter =
                         CollectionFolderFilter(
                             filter =
@@ -247,7 +246,7 @@ fun FavoritesPage(
                 CollectionFolderGrid(
                     preferences = preferences,
                     onClickItem = { _, item -> onClickItem.invoke(item) },
-                    itemId = "${NavDrawerItem.Favorites.id}_playlists",
+                    itemId = "a_favorites_playlists",
                     initialFilter =
                         CollectionFolderFilter(
                             filter =
@@ -279,7 +278,7 @@ fun FavoritesPage(
                 CollectionFolderGrid(
                     preferences = preferences,
                     onClickItem = { _, item -> onClickItem.invoke(item) },
-                    itemId = "${NavDrawerItem.Favorites.id}_people",
+                    itemId = "a_favorites_people",
                     initialFilter =
                         CollectionFolderFilter(
                             filter =

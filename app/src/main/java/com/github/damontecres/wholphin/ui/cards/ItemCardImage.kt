@@ -42,13 +42,9 @@ import com.github.damontecres.wholphin.ui.FontAwesome
 import com.github.damontecres.wholphin.ui.LocalImageUrlService
 import com.github.damontecres.wholphin.ui.isNotNullOrBlank
 import com.github.damontecres.wholphin.ui.logCoilError
+import org.jellyfin.sdk.model.api.BaseItemKind
 import org.jellyfin.sdk.model.api.ImageType
 
-/**
- * Display an image for an item with optional overlay data
- *
- * This will fetch the image using fillWidth/fillHeight based on the layout size
- */
 @Composable
 fun ItemCardImage(
     item: BaseItem?,
@@ -66,19 +62,41 @@ fun ItemCardImage(
 ) {
     val imageUrlService = LocalImageUrlService.current
     var size by remember { mutableStateOf(IntSize.Zero) }
+
+    // IDENTIFY THE EPISODE SCREENSHOT
+    val ticks = item?.data?.userData?.playbackPositionTicks ?: 0L
+    val isInterceptedEpisode = item?.type == BaseItemKind.EPISODE && imageType == ImageType.THUMB && ticks > 0L
+
+    // Swap the image to PRIMARY (screenshot) if it's our target episode
+    val resolvedImageType = if (isInterceptedEpisode) ImageType.PRIMARY else imageType
+
+    // Force Android to crop naturally instead of squishing
+    val finalContentScale = if (isInterceptedEpisode) ContentScale.Crop else contentScale
+
     val imageUrl =
-        remember(size, item) {
+        remember(size, item, resolvedImageType, isInterceptedEpisode) {
             if (size != IntSize.Zero && item != null) {
-                imageUrlService.getItemImageUrl(
-                    item,
-                    imageType,
-                    fillWidth = size.width,
-                    fillHeight = size.height,
-                )
+                if (isInterceptedEpisode) {
+                    // THE FIX: We purposefully DO NOT send fillWidth or fillHeight to the server.
+                    // This forces the server to send the pure, untampered 16:9 image, preventing the squash!
+                    imageUrlService.getItemImageUrl(
+                        item,
+                        resolvedImageType
+                    )
+                } else {
+                    // Normal behavior for movies, next up, etc.
+                    imageUrlService.getItemImageUrl(
+                        item,
+                        resolvedImageType,
+                        fillWidth = size.width,
+                        fillHeight = size.height,
+                    )
+                }
             } else {
                 null
             }
         }
+
     ItemCardImage(
         imageUrl = imageUrl,
         name = name,
@@ -96,7 +114,8 @@ fun ItemCardImage(
                 size = IntSize(width = it.width, height = it.height)
             },
         useFallbackText = useFallbackText,
-        contentScale = contentScale,
+        // Pass our natural crop rule down to the image drawer
+        contentScale = finalContentScale,
     )
 }
 
@@ -162,7 +181,6 @@ fun BoxScope.ItemCardImageFallback(
     useFallbackText: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    // TODO options for overriding fallback
     Box(
         modifier =
             modifier
@@ -230,7 +248,6 @@ fun ItemCardImageOverlay(
                         text = numberOfVersions.toString(),
                         color = MaterialTheme.colorScheme.onSurface,
                         style = MaterialTheme.typography.bodyMedium,
-//                            fontSize = 16.sp,
                         modifier = Modifier.padding(4.dp),
                     )
                 }
@@ -269,7 +286,6 @@ fun ItemCardImageOverlay(
                         text = unwatchedCount.toString(),
                         color = MaterialTheme.colorScheme.onSurface,
                         style = MaterialTheme.typography.bodyMedium,
-//                            fontSize = 16.sp,
                         modifier = Modifier.padding(4.dp),
                     )
                 }
@@ -282,9 +298,9 @@ fun ItemCardImageOverlay(
                     Modifier
                         .align(Alignment.BottomStart)
                         .background(
-                            MaterialTheme.colorScheme.tertiary,
+                            MaterialTheme.colorScheme.border,
                         ).clip(RectangleShape)
-                        .height(Cards.playedPercentHeight)
+                        .height(4.dp)
                         .fillMaxWidth((percent / 100.0).toFloat()),
             )
         }

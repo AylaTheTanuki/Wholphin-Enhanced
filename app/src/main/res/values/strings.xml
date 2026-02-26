@@ -1,10 +1,10 @@
 <resources>
-    <string name="app_name" translatable="false">Wholphin</string>
-    <string name="app_name_long" translatable="false">Wholphin</string>
+    <string name="app_name" translatable="false">Movies &amp; Shows</string>
+    <string name="app_name_long" translatable="false">Movies &amp; Shows</string>
 
     <string name="about">About</string>
     <string name="active_recordings">Active Recordings</string>
-    <string name="add_favorite">Favorite</string>
+    <string name="add_favorite">Add to My List</string>
     <string name="add_server">Add Server</string>
     <string name="add_user">Add User</string>
     <string name="audio">Audio</string>
@@ -42,7 +42,7 @@
     <string name="episodes">Episodes</string>
     <string name="error_loading_collection">Error loading collection %1$s</string>
     <string name="external_track">External</string>
-    <string name="favorites">Favorites</string>
+    <string name="favorites">My List</string>
     <string name="file_size">Size</string>
     <string name="forced_track">Forced</string>
     <string name="genres">Genres</string>
@@ -98,7 +98,7 @@
     <string name="recommended">Recommended</string>
     <string name="record_program">Record Program</string>
     <string name="record_series">Record Series</string>
-    <string name="remove_favorite">Unfavorite</string>
+    <string name="remove_favorite">Remove from My List</string>
     <string name="restart">Restart</string>
     <string name="resume">Resume</string>
     <string name="save">Save</string>
@@ -188,7 +188,7 @@
     <string name="samples">Samples</string>
     <string name="featurettes">Featurettes</string>
     <string name="shorts">Shorts</string>
-    <string name="favorite_items">Favorite %s</string>
+    <string name="favorite_items">My List %s</string>
 
     <plurals name="trailers">
         <item quantity="zero">Trailers</item>
