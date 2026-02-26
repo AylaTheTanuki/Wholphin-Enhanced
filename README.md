@@ -32,28 +32,34 @@ Note: SyncPlay is currently in beta. It successfully discovers groups, joins roo
 📱 Compatibility
 Requires Android 6+ (or Fire TV OS 6+) and Jellyfin server 10.10.x or 10.11.x.
 
-📲 Installation
-Step 1 — Download the APK
-Go to the Wholphin Enhanced Releases page and download the latest .apk file to your phone or computer.
-Step 2 — Enable Sideloading on your TV
+## 📲 Installation
+
+### Step 1 — Download the APK
+
+Download the latest `.apk` file directly from the [latest stable release](https://github.com/AylaTheTanuki/Wholphin-Enhanced/releases/tag/WholphinEnhancedStable) to your phone or computer.
+
+### Step 2 — Enable Sideloading on your TV
+
 Before you can install apps from outside the app store, you need to allow it on your TV:
 
-Android TV / Google TV: Go to Settings → Device Preferences → Security & Restrictions → Unknown Sources and enable it for your file manager or the Files app.
-Fire TV: Go to Settings → My Fire TV → Developer Options → Install Unknown Apps and enable it for Downloader or your file manager.
+- **Android TV / Google TV:** Go to **Settings → Device Preferences → Security & Restrictions → Unknown Sources** and enable it for your file manager or the Files app.
+- **Fire TV:** Go to **Settings → My Fire TV → Developer Options → Install Unknown Apps** and enable it for Downloader or your file manager.
 
-Step 3 — Transfer the APK to your TV
-The easiest way is using the free Send Files to TV app:
+### Step 3 — Transfer the APK to your TV
 
-Install Send Files to TV from the Google Play Store or Amazon AppStore on both your phone and your TV.
-Open the app on your TV and tap Receive.
-Open the app on your phone, tap Send, find the downloaded APK file, and send it to your TV.
-On the TV, accept the incoming file.
+The easiest way is using the free **Send Files to TV** app:
 
-Step 4 — Install the APK
+1. Install **Send Files to TV** from the Google Play Store or Amazon AppStore on **both your phone and your TV**.
+2. Open the app on your **TV** and tap **Receive**.
+3. Open the app on your **phone**, tap **Send**, find the downloaded APK file, and send it to your TV.
+4. On the TV, accept the incoming file.
 
-Once the file has transferred, Send Files to TV will prompt you to open it — tap Open.
-A system prompt will appear asking if you want to install the app — tap Install.
-Once installed, tap Open or find Wholphin Enhanced in your apps.
+### Step 4 — Install the APK
 
-Step 5 — Connect to your Jellyfin server
+1. Once the file has transferred, **Send Files to TV** will prompt you to open it — tap **Open**.
+2. A system prompt will appear asking if you want to install the app — tap **Install**.
+3. Once installed, tap **Open** or find **Wholphin Enhanced** in your apps.
+
+### Step 5 — Connect to your Jellyfin server
+
 Open the app, enter your Jellyfin server address, log in, and you're good to go!
