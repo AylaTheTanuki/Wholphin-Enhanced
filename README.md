@@ -1,7 +1,10 @@
 Wholphin Enhanced - A Custom Android TV Client for Jellyfin
+
+
 Wholphin Enhanced is a heavily modified build of the open-source Wholphin Android TV client for Jellyfin. It includes a wide range of UI, playback, and quality-of-life improvements on top of the original app, with the goal of delivering a premium streaming experience on Android TV devices.
 
-✨ What's New in Wholphin Enhanced
+✨ What's New in Wholphin Enhanced!
+
 🎨 UI, Visuals & Navigation
 
 Premium Visual Overhaul — Comprehensive UI tweaks across the entire app to modernize the interface, smooth out transitions, and give the application a polished, top-tier streaming service feel.
@@ -9,6 +12,8 @@ Revamped "Continue Playing" & "Next Up" — Completely redesigned how ongoing mo
 Genre Hubs — Dedicated Genre lists natively added to the Movies and TV Shows pages, allowing for deep, categorized browsing without needing to search manually.
 Dedicated "My List" — A standard, easily accessible "My List" feature to queue up movies and shows for later viewing.
 Custom Screensaver — A native screensaver that automatically triggers after 10 minutes of inactivity to protect TV displays.
+
+[PXL_20260226_030141035](https://github.com/user-attachments/assets/9305ffa6-16f6-4d38-8dc2-32b6f38dff2c)
 
 🎮 Quality of Life & Controls
 
