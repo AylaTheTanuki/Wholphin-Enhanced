@@ -1,4 +1,5 @@
 Wholphin Enhanced - A Custom Android TV Client for Jellyfin
+[![Watch the Demo](https://img.youtube.com/vi/gnkhTmtkpaA/0.jpg)](https://youtu.be/gnkhTmtkpaA)
 
 
 Wholphin Enhanced is a heavily modified build of the open-source Wholphin Android TV client for Jellyfin. It includes a wide range of UI, playback, and quality-of-life improvements on top of the original app, with the goal of delivering a premium streaming experience on Android TV devices.
