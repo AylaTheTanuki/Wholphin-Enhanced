@@ -1,3 +1,5 @@
+3/28/2026 Hey! this project is not dead and there is an update coming with several bugfixes and dynamic rows! check back soon!
+
 Wholphin Enhanced - A Custom Android TV Client for Jellyfin
 [![Watch the Demo](https://img.youtube.com/vi/gnkhTmtkpaA/0.jpg)](https://youtu.be/gnkhTmtkpaA)
 
