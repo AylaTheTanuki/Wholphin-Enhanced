@@ -28,6 +28,8 @@ class RefreshRateService
     constructor(
         @param:ApplicationContext private val context: Context,
     ) {
+        private val mainHandler = Handler(Looper.getMainLooper())
+
         /**
          * Find the best display mode for the given stream and signal to change to it
          */
@@ -77,7 +79,7 @@ class RefreshRateService
                 val listener = Listener(display.displayId)
                 displayManager.registerDisplayListener(
                     listener,
-                    Handler(Looper.myLooper() ?: Looper.getMainLooper()),
+                    mainHandler,
                 )
                 try {
                     MainActivity.instance.changeDisplayMode(targetMode.modeId)

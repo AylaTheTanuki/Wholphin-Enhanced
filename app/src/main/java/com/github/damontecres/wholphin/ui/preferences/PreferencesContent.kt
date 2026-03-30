@@ -346,6 +346,14 @@ fun PreferencesContent(
                                     )
                                 }
 
+                                AppPreference.MovieSectionRows -> {
+                                    MovieSectionRowsPreference(
+                                        title = stringResource(pref.title),
+                                        summary = pref.summary(context, null),
+                                        modifier = Modifier,
+                                    )
+                                }
+
                                 AppPreference.SendAppLogs -> {
                                     ClickPreference(
                                         title = stringResource(pref.title),

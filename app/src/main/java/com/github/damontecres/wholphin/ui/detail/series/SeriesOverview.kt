@@ -10,6 +10,7 @@ import androidx.compose.runtime.livedata.observeAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.platform.LocalContext
@@ -101,6 +102,9 @@ fun SeriesOverview(
     val episodes by viewModel.episodes.observeAsState(EpisodeList.Loading)
     val peopleInEpisode by viewModel.peopleInEpisode.map { it.people }.observeAsState(listOf())
     val episodeList = (episodes as? EpisodeList.Success)?.episodes
+    val hasCastAndCrew = peopleInEpisode.any { it.type != PersonKind.GUEST_STAR }
+    val hasGuestStars = peopleInEpisode.any { it.type == PersonKind.GUEST_STAR }
+    var episodeRestoreReady by remember { mutableStateOf(false) }
 
     val position by viewModel.position.collectAsState(SeriesOverviewPosition(0, 0))
     LaunchedEffect(Unit) {
@@ -144,6 +148,14 @@ fun SeriesOverview(
             viewModel.lookupPeopleInEpisode(it)
         }
     }
+    LaunchedEffect(episodeList, rowFocused) {
+        episodeRestoreReady = false
+        if (!episodeList.isNullOrEmpty()) {
+            withFrameNanos { }
+            withFrameNanos { }
+            episodeRestoreReady = true
+        }
+    }
     val chosenStreams by viewModel.chosenStreams.observeAsState(null)
 
     when (val state = loading) {
@@ -159,14 +171,16 @@ fun SeriesOverview(
 
         LoadingState.Success -> {
             series?.let { series ->
+                val restoreFocusRequester =
+                    when (rowFocused) {
+                        EPISODE_ROW -> firstItemFocusRequester.takeIf { episodeRestoreReady }
+                        CAST_AND_CREW_ROW -> castCrewRowFocusRequester.takeIf { hasCastAndCrew }
+                        GUEST_STAR_ROW -> guestStarRowFocusRequester.takeIf { hasGuestStars }
+                        else -> firstItemFocusRequester.takeIf { episodeRestoreReady }
+                    }
 
                 RequestOrRestoreFocus(
-                    when (rowFocused) {
-                        EPISODE_ROW -> episodeRowFocusRequester
-                        CAST_AND_CREW_ROW -> castCrewRowFocusRequester
-                        GUEST_STAR_ROW -> guestStarRowFocusRequester
-                        else -> episodeRowFocusRequester
-                    },
+                    restoreFocusRequester,
                     "series_overview",
                 )
                 LifecycleResumeEffect(destination.itemId) {

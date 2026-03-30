@@ -33,7 +33,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.livedata.observeAsState
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusDirection
@@ -87,6 +86,7 @@ import com.github.damontecres.wholphin.ui.spacedByWithFooter
 import com.github.damontecres.wholphin.ui.theme.LocalTheme
 import com.github.damontecres.wholphin.ui.toServerString
 import com.github.damontecres.wholphin.ui.tryRequestFocus
+import com.github.damontecres.wholphin.ui.tryRequestFocusAfterLayout
 import dagger.hilt.android.lifecycle.HiltViewModel
 import org.jellyfin.sdk.api.client.ApiClient
 import org.jellyfin.sdk.api.client.extensions.imageApi
@@ -94,66 +94,67 @@ import org.jellyfin.sdk.model.api.CollectionType
 import timber.log.Timber
 import java.util.UUID
 import javax.inject.Inject
+import kotlinx.coroutines.launch
 
 @HiltViewModel
 class NavDrawerViewModel
-    @Inject
-    constructor(
-        private val api: ApiClient,
-        private val navDrawerService: NavDrawerService,
-        val navigationManager: NavigationManager,
-        val setupNavigationManager: SetupNavigationManager,
-        val backdropService: BackdropService,
-    ) : ViewModel() {
-        val state = navDrawerService.state
+@Inject
+constructor(
+    private val api: ApiClient,
+    private val navDrawerService: NavDrawerService,
+    val navigationManager: NavigationManager,
+    val setupNavigationManager: SetupNavigationManager,
+    val backdropService: BackdropService,
+) : ViewModel() {
+    val state = navDrawerService.state
 
-        val selectedIndex = MutableLiveData(-1)
-        val moreExpanded = MutableLiveData(false)
+    val selectedIndex = MutableLiveData(-1)
+    val moreExpanded = MutableLiveData(false)
 
-        fun onClickDrawerItem(
-            index: Int,
-            item: NavDrawerItem,
-        ) {
-            if (item !is NavDrawerItem.More) setShowMore(false)
-            when (item) {
-                NavDrawerItem.More -> {
-                    setShowMore(!moreExpanded.value!!)
-                }
+    fun onClickDrawerItem(
+        index: Int,
+        item: NavDrawerItem,
+    ) {
+        if (item !is NavDrawerItem.More) setShowMore(false)
+        when (item) {
+            NavDrawerItem.More -> {
+                setShowMore(!moreExpanded.value!!)
+            }
 
-                NavDrawerItem.Discover -> {
-                    setIndex(index)
-                    navigationManager.navigateToFromDrawer(
-                        Destination.Discover,
-                    )
-                }
+            NavDrawerItem.Discover -> {
+                setIndex(index)
+                navigationManager.navigateToFromDrawer(
+                    Destination.Discover,
+                )
+            }
 
-                is ServerNavDrawerItem -> {
-                    setIndex(index)
-                    navigationManager.navigateToFromDrawer(item.destination)
-                }
+            is ServerNavDrawerItem -> {
+                setIndex(index)
+                navigationManager.navigateToFromDrawer(item.destination)
             }
         }
+    }
 
-        fun setIndex(index: Int) {
-            selectedIndex.value = index
-        }
+    fun setIndex(index: Int) {
+        selectedIndex.value = index
+    }
 
-        fun setShowMore(value: Boolean) {
-            moreExpanded.value = value
-        }
+    fun setShowMore(value: Boolean) {
+        moreExpanded.value = value
+    }
 
-        fun getUserImage(user: JellyfinUser): String = api.imageApi.getUserImageUrl(user.id)
+    fun getUserImage(user: JellyfinUser): String = api.imageApi.getUserImageUrl(user.id)
 
-        fun updateSelectedIndex() {
-            viewModelScope.launchDefault {
-                val asDestinations =
-                    (
+    fun updateSelectedIndex() {
+        viewModelScope.launchDefault {
+            val asDestinations =
+                (
                         state.value.items +
-                            listOf(
-                                NavDrawerItem.More,
-                                NavDrawerItem.Discover,
-                            ) + state.value.moreItems
-                    ).map {
+                                listOf(
+                                    NavDrawerItem.More,
+                                    NavDrawerItem.Discover,
+                                ) + state.value.moreItems
+                        ).map {
                         if (it is ServerNavDrawerItem) {
                             it.destination
                         } else if (it is NavDrawerItem.Discover) {
@@ -163,33 +164,33 @@ class NavDrawerViewModel
                         }
                     }
 
-                val backstack = navigationManager.backStack.toList().reversed()
-                for (i in 0..<backstack.size) {
-                    val key = backstack[i]
-                    if (key is Destination) {
-                        val index =
-                            if (key is Destination.Home) {
-                                -1
-                            } else if (key is Destination.Search) {
-                                -2
+            val backstack = navigationManager.backStack.toList().reversed()
+            for (i in 0..<backstack.size) {
+                val key = backstack[i]
+                if (key is Destination) {
+                    val index =
+                        if (key is Destination.Home) {
+                            -1
+                        } else if (key is Destination.Search) {
+                            -2
+                        } else {
+                            val idx = asDestinations.indexOf(key)
+                            if (idx >= 0) {
+                                idx
                             } else {
-                                val idx = asDestinations.indexOf(key)
-                                if (idx >= 0) {
-                                    idx
-                                } else {
-                                    null
-                                }
+                                null
                             }
-                        Timber.v("Found $index => $key")
-                        if (index != null) {
-                            selectedIndex.setValueOnMain(index)
-                            break
                         }
+                    Timber.v("Found $index => $key")
+                    if (index != null) {
+                        selectedIndex.setValueOnMain(index)
+                        break
                     }
                 }
             }
         }
     }
+}
 
 sealed interface NavDrawerItem {
     val id: String
@@ -236,31 +237,32 @@ fun NavDrawer(
     user: JellyfinUser,
     server: JellyfinServer,
     drawerState: DrawerState,
+    autoOpenEnabled: Boolean,
+    drawerOpenRequestGate: DrawerOpenRequestGate,
     navDrawerListState: LazyListState,
     onClearBackdrop: () -> Unit,
     modifier: Modifier = Modifier,
     viewModel: NavDrawerViewModel =
         hiltViewModel(
             LocalView.current.findViewTreeViewModelStoreOwner()!!,
-            key = "${server.id}_${user.id}", // Keyed to the server & user to ensure its reset when switching either
+            key = "${server.id}_${user.id}",
         ),
 ) {
     LaunchedEffect(Unit) { viewModel.updateSelectedIndex() }
-    val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val density = LocalDensity.current
 
     val focusRequester = remember { FocusRequester() }
 
-    // If the user presses back while on the home page, open the nav drawer, another back press will quit the app
-    BackHandler(enabled = (drawerState.currentValue == DrawerValue.Closed && destination is Destination.Home)) {
-        drawerState.setValue(DrawerValue.Open)
-        focusRequester.requestFocus()
-    }
     val state by viewModel.state.collectAsState()
     val moreExpanded by viewModel.moreExpanded.observeAsState(false)
-    // A negative index is a built-in page, >=0 is a library
     val selectedIndex by viewModel.selectedIndex.observeAsState(-1)
+
+    LaunchedEffect(drawerState.currentValue, selectedIndex) {
+        if (drawerState.currentValue == DrawerValue.Open) {
+            focusRequester.tryRequestFocusAfterLayout("nav_drawer_open_selected")
+        }
+    }
 
     BackHandler(enabled = moreExpanded && drawerState.currentValue == DrawerValue.Open) {
         viewModel.setShowMore(false)
@@ -287,8 +289,15 @@ fun NavDrawer(
     ModalNavigationDrawer(
         modifier = modifier,
         drawerState = drawerState,
+        autoOpenEnabled = autoOpenEnabled,
+        drawerOpenRequestGate = drawerOpenRequestGate,
         drawerContent = { drawerValue ->
             val isOpen = drawerValue.isOpen
+            val drawerItemCanFocus = isOpen || drawerOpenRequestGate.isActive()
+            val drawerItemFocusModifier =
+                Modifier.focusProperties {
+                    canFocus = drawerItemCanFocus
+                }
             val spacedBy = 4.dp
             val searchFocusRequester = remember { FocusRequester() }
 
@@ -298,7 +307,6 @@ fun NavDrawer(
                     verticalArrangement = Arrangement.spacedBy(spacedBy),
                     modifier = Modifier.fillMaxHeight(),
                 ) {
-                    // Even though some must be clicked, focusing on it should clear other focused items
                     val interactionSource = remember { MutableInteractionSource() }
                     val userImageUrl = remember(user) { viewModel.getUserImage(user) }
                     ProfileIcon(
@@ -312,7 +320,7 @@ fun NavDrawer(
                                 SetupDestination.UserList(server),
                             )
                         },
-                        modifier = Modifier,
+                        modifier = drawerItemFocusModifier,
                     )
                     LazyColumn(
                         state = navDrawerListState,
@@ -345,7 +353,7 @@ fun NavDrawer(
                                     viewModel.navigationManager.navigateToFromDrawer(Destination.Search)
                                 },
                                 modifier =
-                                    Modifier
+                                    drawerItemFocusModifier
                                         .focusRequester(searchFocusRequester)
                                         .ifElse(
                                             selectedIndex == -2,
@@ -370,7 +378,7 @@ fun NavDrawer(
                                     }
                                 },
                                 modifier =
-                                    Modifier
+                                    drawerItemFocusModifier
                                         .ifElse(
                                             selectedIndex == -1,
                                             Modifier.focusRequester(focusRequester),
@@ -390,7 +398,7 @@ fun NavDrawer(
                                         viewModel.onClickDrawerItem(index, it)
                                     },
                                     modifier =
-                                        Modifier
+                                        drawerItemFocusModifier
                                             .ifElse(
                                                 selectedIndex == index,
                                                 Modifier.focusRequester(focusRequester),
@@ -412,7 +420,7 @@ fun NavDrawer(
                                         viewModel.onClickDrawerItem(index, NavDrawerItem.More)
                                     },
                                     modifier =
-                                        Modifier
+                                        drawerItemFocusModifier
                                             .ifElse(
                                                 selectedIndex == index,
                                                 Modifier.focusRequester(focusRequester),
@@ -445,7 +453,7 @@ fun NavDrawer(
                                             },
                                         interactionSource = interactionSource,
                                         modifier =
-                                            Modifier
+                                            drawerItemFocusModifier
                                                 .ifElse(
                                                     selectedIndex == adjustedIndex,
                                                     Modifier.focusRequester(focusRequester),
@@ -469,7 +477,7 @@ fun NavDrawer(
                                         ),
                                     )
                                 },
-                                modifier = Modifier,
+                                modifier = drawerItemFocusModifier,
                             )
                         }
                     }
@@ -480,7 +488,6 @@ fun NavDrawer(
         Box(
             modifier = Modifier.fillMaxSize(),
         ) {
-            // Drawer content
             DestinationContent(
                 destination = destination,
                 preferences = preferences,
@@ -704,11 +711,11 @@ fun navItemColor(
                     AppThemeColors.BLUE,
                     AppThemeColors.GREEN,
                     AppThemeColors.ORANGE,
-                    -> MaterialTheme.colorScheme.border
+                        -> MaterialTheme.colorScheme.border
 
                     AppThemeColors.BOLD_BLUE,
                     AppThemeColors.OLED_BLACK,
-                    -> MaterialTheme.colorScheme.primary
+                        -> MaterialTheme.colorScheme.primary
                 }
             }
 

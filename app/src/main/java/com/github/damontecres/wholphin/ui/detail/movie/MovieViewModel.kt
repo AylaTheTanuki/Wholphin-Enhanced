@@ -52,226 +52,255 @@ import org.jellyfin.sdk.api.client.extensions.libraryApi
 import org.jellyfin.sdk.api.client.extensions.userLibraryApi
 import org.jellyfin.sdk.model.api.MediaStreamType
 import org.jellyfin.sdk.model.api.request.GetSimilarItemsRequest
+import timber.log.Timber
 import java.util.UUID
 
 @HiltViewModel(assistedFactory = MovieViewModel.Factory::class)
 class MovieViewModel
-    @AssistedInject
-    constructor(
-        private val api: ApiClient,
-        private val seerrService: SeerrService,
-        @param:ApplicationContext private val context: Context,
-        private val navigationManager: NavigationManager,
-        val serverRepository: ServerRepository,
-        val itemPlaybackRepository: ItemPlaybackRepository,
-        val streamChoiceService: StreamChoiceService,
-        val mediaReportService: MediaReportService,
-        private val themeSongPlayer: ThemeSongPlayer,
-        private val favoriteWatchManager: FavoriteWatchManager,
-        private val peopleFavorites: PeopleFavorites,
-        private val trailerService: TrailerService,
-        private val extrasService: ExtrasService,
-        private val userPreferencesService: UserPreferencesService,
-        private val backdropService: BackdropService,
-        @Assisted val itemId: UUID,
-    ) : ViewModel() {
-        @AssistedFactory
-        interface Factory {
-            fun create(itemId: UUID): MovieViewModel
-        }
+@AssistedInject
+constructor(
+    private val api: ApiClient,
+    private val seerrService: SeerrService,
+    @param:ApplicationContext private val context: Context,
+    private val navigationManager: NavigationManager,
+    val serverRepository: ServerRepository,
+    val itemPlaybackRepository: ItemPlaybackRepository,
+    val streamChoiceService: StreamChoiceService,
+    val mediaReportService: MediaReportService,
+    private val themeSongPlayer: ThemeSongPlayer,
+    private val favoriteWatchManager: FavoriteWatchManager,
+    private val peopleFavorites: PeopleFavorites,
+    private val trailerService: TrailerService,
+    private val extrasService: ExtrasService,
+    private val userPreferencesService: UserPreferencesService,
+    private val backdropService: BackdropService,
+    @Assisted val itemId: UUID,
+) : ViewModel() {
+    @AssistedFactory
+    interface Factory {
+        fun create(itemId: UUID): MovieViewModel
+    }
 
-        val loading = MutableLiveData<LoadingState>(LoadingState.Pending)
-        val item = MutableLiveData<BaseItem?>(null)
-        val trailers = MutableLiveData<List<Trailer>>(listOf())
-        val people = MutableLiveData<List<Person>>(listOf())
-        val chapters = MutableLiveData<List<Chapter>>(listOf())
-        val extras = MutableLiveData<List<ExtrasItem>>(listOf())
-        val similar = MutableLiveData<List<BaseItem>>()
-        val chosenStreams = MutableLiveData<ChosenStreams?>(null)
-        val discovered = MutableStateFlow<List<DiscoverItem>>(listOf())
+    val loading = MutableLiveData<LoadingState>(LoadingState.Pending)
+    val item = MutableLiveData<BaseItem?>(null)
+    val trailers = MutableLiveData<List<Trailer>>(listOf())
+    val people = MutableLiveData<List<Person>>(listOf())
+    val chapters = MutableLiveData<List<Chapter>>(listOf())
+    val extras = MutableLiveData<List<ExtrasItem>>(listOf())
+    val similar = MutableLiveData<List<BaseItem>>()
+    val chosenStreams = MutableLiveData<ChosenStreams?>(null)
+    val resumeRefreshToken = MutableLiveData(0)
+    val discovered = MutableStateFlow<List<DiscoverItem>>(listOf())
 
-        init {
-            init()
-        }
+    init {
+        init()
+    }
 
-        private fun fetchAndSetItem(): Deferred<BaseItem> =
-            viewModelScope.async(
-                Dispatchers.IO +
+    private fun fetchAndSetItem(): Deferred<BaseItem> =
+        viewModelScope.async(
+            Dispatchers.IO +
                     LoadingExceptionHandler(
                         loading,
                         "Error fetching movie",
                     ),
-            ) {
-                val item =
-                    api.userLibraryApi.getItem(itemId).content.let {
-                        BaseItem.from(it, api)
-                    }
-                this@MovieViewModel.item.setValueOnMain(item)
-                item
-            }
+        ) {
+            val item =
+                api.userLibraryApi.getItem(itemId).content.let {
+                    BaseItem.from(it, api)
+                }
+            this@MovieViewModel.item.setValueOnMain(item)
+            item
+        }
 
-        fun init(): Job =
-            viewModelScope.launch(
-                Dispatchers.IO +
+    fun init(): Job =
+        viewModelScope.launch(
+            Dispatchers.IO +
                     LoadingExceptionHandler(
                         loading,
                         "Error fetching movie",
                     ),
-            ) {
-                val item = fetchAndSetItem().await()
-                val result =
-                    itemPlaybackRepository.getSelectedTracks(
-                        item.id,
-                        item,
-                        userPreferencesService.getCurrent(),
-                    )
-                val remoteTrailers = trailerService.getRemoteTrailers(item)
-                withContext(Dispatchers.Main) {
-                    this@MovieViewModel.item.value = item
-                    chosenStreams.value = result
-                    this@MovieViewModel.trailers.value = remoteTrailers
-                    loading.value = LoadingState.Success
-                    backdropService.submit(item)
-                }
-                viewModelScope.launchIO {
-                    trailerService.getLocalTrailers(item).letNotEmpty { localTrailers ->
-                        withContext(Dispatchers.Main) {
-                            this@MovieViewModel.trailers.value = localTrailers + remoteTrailers
-                        }
+        ) {
+            val item = fetchAndSetItem().await()
+            val result =
+                itemPlaybackRepository.getSelectedTracks(
+                    item.id,
+                    item,
+                    userPreferencesService.getCurrent(),
+                )
+            val remoteTrailers = trailerService.getRemoteTrailers(item)
+            withContext(Dispatchers.Main) {
+                this@MovieViewModel.item.value = item
+                chosenStreams.value = result
+                this@MovieViewModel.trailers.value = remoteTrailers
+                loading.value = LoadingState.Success
+                backdropService.submit(item)
+            }
+            viewModelScope.launchIO {
+                trailerService.getLocalTrailers(item).letNotEmpty { localTrailers ->
+                    withContext(Dispatchers.Main) {
+                        this@MovieViewModel.trailers.value = localTrailers + remoteTrailers
                     }
                 }
-                viewModelScope.launchIO {
-                    val people = peopleFavorites.getPeopleFor(item)
-                    this@MovieViewModel.people.setValueOnMain(people)
-                }
-                viewModelScope.launchIO {
-                    val extras = extrasService.getExtras(item.id)
-                    this@MovieViewModel.extras.setValueOnMain(extras)
-                }
-                viewModelScope.launchIO {
-                    val results = seerrService.similar(item).orEmpty()
-                    discovered.update { results }
-                }
-
-                withContext(Dispatchers.Main) {
-                    chapters.value = Chapter.fromDto(item.data, api)
-                }
-                if (!similar.isInitialized) {
-                    val similar =
-                        api.libraryApi
-                            .getSimilarItems(
-                                GetSimilarItemsRequest(
-                                    userId = serverRepository.currentUser.value?.id,
-                                    itemId = itemId,
-                                    fields = SlimItemFields,
-                                    limit = 25,
-                                ),
-                            ).content.items
-                            .map { BaseItem.Companion.from(it, api) }
-                    this@MovieViewModel.similar.setValueOnMain(similar)
-                }
             }
-
-        fun setWatched(
-            itemId: UUID,
-            played: Boolean,
-        ) = viewModelScope.launch(ExceptionHandler() + Dispatchers.IO) {
-            favoriteWatchManager.setWatched(itemId, played)
-            fetchAndSetItem()
-        }
-
-        fun setFavorite(
-            itemId: UUID,
-            favorite: Boolean,
-        ) = viewModelScope.launch(ExceptionHandler() + Dispatchers.IO) {
-            favoriteWatchManager.setFavorite(itemId, favorite)
-            val item = item.value
-            fetchAndSetItem()
-            if (item != null && itemId != item.id) {
-                viewModelScope.launchIO {
-                    val people = peopleFavorites.getPeopleFor(item)
-                    this@MovieViewModel.people.setValueOnMain(people)
-                }
-            }
-        }
-
-        fun savePlayVersion(
-            item: BaseItem,
-            sourceId: UUID,
-        ) {
             viewModelScope.launchIO {
-                val prefs = userPreferencesService.getCurrent()
-                val plc = streamChoiceService.getPlaybackLanguageChoice(item.data)
-                val result = itemPlaybackRepository.savePlayVersion(item.id, sourceId)
-                val chosen =
-                    result?.let {
-                        itemPlaybackRepository.getChosenItemFromPlayback(item, result, plc, prefs)
-                    }
-                withContext(Dispatchers.Main) {
-                    chosenStreams.value = chosen
-                }
+                val people = peopleFavorites.getPeopleFor(item)
+                this@MovieViewModel.people.setValueOnMain(people)
+            }
+            viewModelScope.launchIO {
+                val extras = extrasService.getExtras(item.id)
+                this@MovieViewModel.extras.setValueOnMain(extras)
+            }
+            viewModelScope.launchIO {
+                val results = seerrService.similar(item).orEmpty()
+                discovered.update { results }
+            }
+
+            withContext(Dispatchers.Main) {
+                chapters.value = Chapter.fromDto(item.data, api)
+            }
+            if (!similar.isInitialized) {
+                val similar =
+                    api.libraryApi
+                        .getSimilarItems(
+                            GetSimilarItemsRequest(
+                                userId = serverRepository.currentUser.value?.id,
+                                itemId = itemId,
+                                fields = SlimItemFields,
+                                limit = 25,
+                            ),
+                        ).content.items
+                        .map { BaseItem.Companion.from(it, api) }
+                this@MovieViewModel.similar.setValueOnMain(similar)
             }
         }
 
-        fun saveTrackSelection(
-            item: BaseItem,
-            itemPlayback: ItemPlayback?,
-            trackIndex: Int,
-            type: MediaStreamType,
-        ) {
+    fun setWatched(
+        itemId: UUID,
+        played: Boolean,
+    ) = viewModelScope.launch(ExceptionHandler() + Dispatchers.IO) {
+        favoriteWatchManager.setWatched(itemId, played)
+        fetchAndSetItem()
+    }
+
+    fun setFavorite(
+        itemId: UUID,
+        favorite: Boolean,
+    ) = viewModelScope.launch(ExceptionHandler() + Dispatchers.IO) {
+        favoriteWatchManager.setFavorite(itemId, favorite)
+        val item = item.value
+        fetchAndSetItem()
+        if (item != null && itemId != item.id) {
             viewModelScope.launchIO {
-                val prefs = userPreferencesService.getCurrent()
-                val plc = streamChoiceService.getPlaybackLanguageChoice(item.data)
-                val result =
-                    itemPlaybackRepository.saveTrackSelection(
-                        item = item,
-                        itemPlayback = itemPlayback,
-                        trackIndex = trackIndex,
-                        type = type,
-                    )
-                val chosen =
-                    result?.let {
-                        itemPlaybackRepository.getChosenItemFromPlayback(item, result, plc, prefs)
-                    }
-                withContext(Dispatchers.Main) {
-                    chosenStreams.value = chosen
-                }
-            }
-        }
-
-        fun maybePlayThemeSong(
-            seriesId: UUID,
-            playThemeSongs: ThemeSongVolume,
-        ) {
-            viewModelScope.launchIO {
-                themeSongPlayer.playThemeFor(seriesId, playThemeSongs)
-                addCloseable {
-                    themeSongPlayer.stop()
-                }
-            }
-        }
-
-        fun release() {
-            themeSongPlayer.stop()
-        }
-
-        fun navigateTo(destination: Destination) {
-            release()
-            navigationManager.navigateTo(destination)
-        }
-
-        fun clearChosenStreams(chosenStreams: ChosenStreams?) {
-            viewModelScope.launchIO {
-                itemPlaybackRepository.deleteChosenStreams(chosenStreams)
-                item.value?.let { item ->
-                    val result =
-                        itemPlaybackRepository.getSelectedTracks(
-                            itemId,
-                            item,
-                            userPreferencesService.getCurrent(),
-                        )
-                    this@MovieViewModel.chosenStreams.setValueOnMain(result)
-                }
+                val people = peopleFavorites.getPeopleFor(item)
+                this@MovieViewModel.people.setValueOnMain(people)
             }
         }
     }
+
+    fun savePlayVersion(
+        item: BaseItem,
+        sourceId: UUID,
+    ) {
+        viewModelScope.launchIO {
+            val prefs = userPreferencesService.getCurrent()
+            val plc = streamChoiceService.getPlaybackLanguageChoice(item.data)
+            val result = itemPlaybackRepository.savePlayVersion(item.id, sourceId)
+            val chosen =
+                result?.let {
+                    itemPlaybackRepository.getChosenItemFromPlayback(item, result, plc, prefs)
+                }
+            withContext(Dispatchers.Main) {
+                chosenStreams.value = chosen
+            }
+        }
+    }
+
+    fun saveTrackSelection(
+        item: BaseItem,
+        itemPlayback: ItemPlayback?,
+        trackIndex: Int,
+        type: MediaStreamType,
+    ) {
+        viewModelScope.launchIO {
+            val prefs = userPreferencesService.getCurrent()
+            val plc = streamChoiceService.getPlaybackLanguageChoice(item.data)
+            val result =
+                itemPlaybackRepository.saveTrackSelection(
+                    item = item,
+                    itemPlayback = itemPlayback,
+                    trackIndex = trackIndex,
+                    type = type,
+                )
+            val chosen =
+                result?.let {
+                    itemPlaybackRepository.getChosenItemFromPlayback(item, result, plc, prefs)
+                }
+            withContext(Dispatchers.Main) {
+                chosenStreams.value = chosen
+            }
+        }
+    }
+
+    fun maybePlayThemeSong(
+        seriesId: UUID,
+        playThemeSongs: ThemeSongVolume,
+    ) {
+        viewModelScope.launchIO {
+            themeSongPlayer.playThemeFor(seriesId, playThemeSongs)
+            addCloseable {
+                themeSongPlayer.stop()
+            }
+        }
+    }
+
+    // FIX: Bypass fetchAndSetItem() and loading state entirely.
+    // Do a raw fetch and post directly to item.value and chosenStreams.value
+    // so the page never flickers back to a loading screen on return from player.
+    fun onResumePage() {
+        viewModelScope.launchIO {
+            try {
+                val updatedItem = api.userLibraryApi.getItem(itemId).content
+                    .let { BaseItem.from(it, api) }
+
+                val result = itemPlaybackRepository.getSelectedTracks(
+                    updatedItem.id,
+                    updatedItem,
+                    userPreferencesService.getCurrent(),
+                )
+
+                withContext(Dispatchers.Main) {
+                    item.value = updatedItem
+                    chosenStreams.value = result
+                    resumeRefreshToken.value = (resumeRefreshToken.value ?: 0) + 1
+                }
+                backdropService.submit(updatedItem)
+            } catch (e: Exception) {
+                Timber.e(e, "onResumePage: failed to refresh movie $itemId")
+            }
+        }
+    }
+
+    fun release() {
+        themeSongPlayer.stop()
+    }
+
+    fun navigateTo(destination: Destination) {
+        release()
+        navigationManager.navigateTo(destination)
+    }
+
+    fun clearChosenStreams(chosenStreams: ChosenStreams?) {
+        viewModelScope.launchIO {
+            itemPlaybackRepository.deleteChosenStreams(chosenStreams)
+            item.value?.let { item ->
+                val result =
+                    itemPlaybackRepository.getSelectedTracks(
+                        itemId,
+                        item,
+                        userPreferencesService.getCurrent(),
+                    )
+                this@MovieViewModel.chosenStreams.setValueOnMain(result)
+            }
+        }
+    }
+}

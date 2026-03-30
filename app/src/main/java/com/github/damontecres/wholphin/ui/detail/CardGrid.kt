@@ -24,7 +24,9 @@ import androidx.compose.foundation.lazy.layout.LazyLayoutCacheWindow
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -39,7 +41,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
@@ -52,6 +53,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.tv.material3.Button
 import androidx.tv.material3.ButtonDefaults
 import androidx.tv.material3.LocalContentColor
@@ -62,11 +65,13 @@ import com.github.damontecres.wholphin.data.model.BaseItem
 import com.github.damontecres.wholphin.ui.AppColors
 import com.github.damontecres.wholphin.ui.FontAwesome
 import com.github.damontecres.wholphin.ui.cards.GridCard
+import com.github.damontecres.wholphin.ui.cards.LocalGridCardFocusAnimationsEnabled
 import com.github.damontecres.wholphin.ui.ifElse
 import com.github.damontecres.wholphin.ui.playback.isBackwardButton
 import com.github.damontecres.wholphin.ui.playback.isForwardButton
 import com.github.damontecres.wholphin.ui.playback.isPlayKeyUp
 import com.github.damontecres.wholphin.ui.tryRequestFocus
+import com.github.damontecres.wholphin.ui.tryRequestFocusAfterLayout
 import com.github.damontecres.wholphin.util.ExceptionHandler
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -122,10 +127,17 @@ fun <T : CardGridItem> CardGrid(
             cacheWindow = fractionCacheWindow,
             initialFirstVisibleItemIndex = focusedIndex,
         )
+    val gridCardFocusAnimationsEnabled by remember(gridState) {
+        derivedStateOf { !gridState.isScrollInProgress }
+    }
     val scope = rememberCoroutineScope()
     val firstFocus = remember { FocusRequester() }
     val zeroFocus = remember { FocusRequester() }
     var previouslyFocusedIndex by rememberSaveable { mutableIntStateOf(0) }
+    var pendingRestoreIndex by rememberSaveable { mutableIntStateOf(-1) }
+    var navigationRestoreIndex by rememberSaveable { mutableIntStateOf(-1) }
+    var awaitingResumeRestore by rememberSaveable { mutableStateOf(false) }
+    var restoringAfterResume by rememberSaveable { mutableStateOf(false) }
 
     var alphabetFocus by remember { mutableStateOf(false) }
     val focusOn = { index: Int ->
@@ -143,6 +155,25 @@ fun <T : CardGridItem> CardGrid(
             alphabetFocusRequester.tryRequestFocus()
         }
         alphabetFocus = false
+    }
+
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        if (awaitingResumeRestore && navigationRestoreIndex in pager.indices) {
+            val restoreAlreadyInPlace = focusedIndex == navigationRestoreIndex
+            if (restoreAlreadyInPlace) {
+                pendingRestoreIndex = -1
+                restoringAfterResume = false
+                awaitingResumeRestore = false
+            } else {
+                focusedIndex = navigationRestoreIndex
+                pendingRestoreIndex = navigationRestoreIndex
+                restoringAfterResume = true
+                awaitingResumeRestore = false
+                scope.launch(ExceptionHandler()) {
+                    firstFocus.tryRequestFocusAfterLayout("card_grid_resume:$navigationRestoreIndex")
+                }
+            }
+        }
     }
 
     val useBackToJump = true // uiConfig.preferences.interfacePreferences.scrollTopOnBack
@@ -178,6 +209,7 @@ fun <T : CardGridItem> CardGrid(
             val newPosition =
                 (gridState.firstVisibleItemIndex + jump).coerceIn(0..<pager.size)
             if (DEBUG) Timber.d("newPosition=$newPosition")
+            pendingRestoreIndex = -1
             focusOn(newPosition)
             gridState.scrollToItem(newPosition, 0)
         }
@@ -190,6 +222,7 @@ fun <T : CardGridItem> CardGrid(
             } else {
                 gridState.scrollToItem(0, 0)
             }
+            pendingRestoreIndex = -1
             focusOn(0)
             zeroFocus.tryRequestFocus()
         }
@@ -237,12 +270,17 @@ fun <T : CardGridItem> CardGrid(
                         if (it.type != KeyEventType.KeyUp) {
                             return@onKeyEvent false
                         } else if (useBackToJump && it.key == Key.Back && focusedIndex > 0) {
+                            pendingRestoreIndex = -1
                             jumpToTop()
                             return@onKeyEvent true
                         } else if (isPlayKeyUp(it)) {
                             val item = pager.getOrNull(focusedIndex)
                             if (item?.playable == true) {
                                 Timber.v("Clicked play on ${item.gridId}")
+                                navigationRestoreIndex = focusedIndex
+                                awaitingResumeRestore = true
+                                restoringAfterResume = false
+                                pendingRestoreIndex = focusedIndex
                                 onClickPlay.invoke(focusedIndex, item)
                             }
                             return@onKeyEvent true
@@ -268,73 +306,94 @@ fun <T : CardGridItem> CardGrid(
             Box(
                 modifier = Modifier.weight(1f),
             ) {
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(columns),
-                    horizontalArrangement = Arrangement.spacedBy(spacing),
-                    verticalArrangement = Arrangement.spacedBy(spacing),
-                    state = gridState,
-                    contentPadding = PaddingValues(vertical = 16.dp),
-                    modifier =
-                        Modifier
-                            .fillMaxSize()
-                            .focusGroup()
-                            .focusRestorer(firstFocus)
-                            .focusProperties {
-                                onExit = {
-                                }
-                                onEnter = {
-                                    if (focusedIndex < 0 && gridState.firstVisibleItemIndex <= startPosition) {
-                                        focusedIndex = startPosition
-                                    }
-                                }
-                            },
+                CompositionLocalProvider(
+                    LocalGridCardFocusAnimationsEnabled provides gridCardFocusAnimationsEnabled,
                 ) {
-                    items(pager.size) { index ->
-                        val mod =
-                            if ((index == focusedIndex) || (focusedIndex == -1 && index == 0)) {
-                                if (DEBUG) Timber.d("Adding firstFocus to focusedIndex $index")
-                                Modifier
-                                    .focusRequester(firstFocus)
-                                    .focusRequester(gridFocusRequester)
-                                    .focusRequester(alphabetFocusRequester)
-                            } else {
-                                Modifier
-                            }
-                        val item = pager[index]
-                        cardContent(
-                            item,
-                            {
-                                if (item != null) {
-                                    focusedIndex = index
-                                    onClickItem.invoke(index, item)
-                                }
-                            },
-                            {
-                                if (item != null) {
-                                    onLongClickItem.invoke(index, item)
-                                    // Rapid focus toggle to force the UI to redraw the card instantly
-                                    scope.launch(ExceptionHandler()) {
-                                        val tempIndex = focusedIndex
-                                        focusedIndex = -2
-                                        delay(20)
-                                        focusedIndex = tempIndex
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(columns),
+                        horizontalArrangement = Arrangement.spacedBy(spacing),
+                        verticalArrangement = Arrangement.spacedBy(spacing),
+                        state = gridState,
+                        contentPadding = PaddingValues(vertical = 16.dp),
+                        modifier =
+                            Modifier
+                                .fillMaxSize()
+                                .focusGroup()
+                                .focusProperties {
+                                    onExit = {
                                     }
+                                    onEnter = {
+                                        val restoreIndex =
+                                            pendingRestoreIndex
+                                                .takeIf { it in pager.indices }
+                                                ?: focusedIndex
+                                                    .takeIf { it in pager.indices }
+                                                ?: startPosition
+                                        focusedIndex = restoreIndex
+                                        firstFocus.tryRequestFocus("card_grid_enter:$restoreIndex")
+                                    }
+                                },
+                    ) {
+                        items(pager.size) { index ->
+                            val mod =
+                                if ((index == focusedIndex) || (focusedIndex == -1 && index == 0)) {
+                                    if (DEBUG) Timber.d("Adding firstFocus to focusedIndex $index")
+                                    Modifier
+                                        .focusRequester(firstFocus)
+                                        .focusRequester(gridFocusRequester)
+                                        .focusRequester(alphabetFocusRequester)
+                                } else {
+                                    Modifier
                                 }
-                            },
-                            mod
-                                .ifElse(index == 0, Modifier.focusRequester(zeroFocus))
-                                .onFocusChanged { focusState ->
-                                    if (DEBUG) {
-                                        Timber.v(
-                                            "$index isFocused=${focusState.isFocused}",
+                            val item = pager[index]
+                            cardContent(
+                                item,
+                                {
+                                    if (item != null) {
+                                        navigationRestoreIndex = index
+                                        awaitingResumeRestore = true
+                                        restoringAfterResume = false
+                                        pendingRestoreIndex = index
+                                        focusedIndex = index
+                                        onClickItem.invoke(index, item)
+                                    }
+                                },
+                            {
+                                if (item != null) {
+                                        onLongClickItem.invoke(index, item)
+                                        // Rapid focus toggle to force the UI to redraw the card instantly
+                                        scope.launch(ExceptionHandler()) {
+                                            val tempIndex = focusedIndex
+                                            focusedIndex = -2
+                                            delay(20)
+                                            focusedIndex = tempIndex
+                                        }
+                                    }
+                                },
+                                mod
+                                    .ifElse(index == 0, Modifier.focusRequester(zeroFocus))
+                                    .onFocusChanged { focusState ->
+                                        if (DEBUG) {
+                                            Timber.v(
+                                                "$index isFocused=${focusState.isFocused}",
                                         )
                                     }
                                     if (focusState.isFocused) {
+                                        if (awaitingResumeRestore) return@onFocusChanged
+                                        if (restoringAfterResume && index != navigationRestoreIndex) return@onFocusChanged
+                                        if (restoringAfterResume && index == navigationRestoreIndex) {
+                                            restoringAfterResume = false
+                                        }
+                                        if (pendingRestoreIndex >= 0 && index != pendingRestoreIndex) return@onFocusChanged
                                         focusOn(index)
+                                        if (pendingRestoreIndex == index) {
+                                            pendingRestoreIndex = -1
+                                        }
                                         positionCallback?.invoke(columns, index)
                                     }
                                 },
-                        )
+                            )
+                        }
                     }
                 }
                 if (pager.isEmpty()) {
@@ -400,6 +459,7 @@ fun <T : CardGridItem> CardGrid(
                             if (jumpPosition >= 0) {
                                 pager.getOrNull(jumpPosition)
                                 gridState.scrollToItem(jumpPosition)
+                                pendingRestoreIndex = -1
                                 focusOn(jumpPosition)
                                 alphabetFocus = true
                             }

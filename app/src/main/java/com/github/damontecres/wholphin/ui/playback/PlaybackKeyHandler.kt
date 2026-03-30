@@ -28,6 +28,24 @@ class PlaybackKeyHandler(
     private val onStop: () -> Unit,
     private val onPlaybackDialogTypeClick: (PlaybackDialogType) -> Unit,
 ) {
+    private fun seekWithRecovery(
+        amount: Duration,
+        forward: Boolean,
+    ) {
+        val wasPlaying = player.isPlaying
+        if (forward) {
+            player.seekForward(amount)
+            updateSkipIndicator(amount.inWholeMilliseconds)
+        } else {
+            player.seekBack(amount)
+            updateSkipIndicator(-amount.inWholeMilliseconds)
+        }
+        if (wasPlaying) {
+            player.play()
+        }
+        controllerViewState.pulseControls()
+    }
+
     fun onKeyEvent(it: KeyEvent): Boolean {
         if (it.type == KeyEventType.KeyUp) onInteraction.invoke()
 
@@ -39,11 +57,9 @@ class PlaybackKeyHandler(
         } else if (isDirectionalDpad(it) || isEnterKey(it) || isControllerMedia(it)) {
             if (!controllerViewState.controlsVisible) {
                 if (skipWithLeftRight && isSkipBack(it)) {
-                    updateSkipIndicator(-seekBack.inWholeMilliseconds)
-                    player.seekBack(seekBack)
+                    seekWithRecovery(seekBack, forward = false)
                 } else if (skipWithLeftRight && isSkipForward(it)) {
-                    player.seekForward(seekForward)
-                    updateSkipIndicator(seekForward.inWholeMilliseconds)
+                    seekWithRecovery(seekForward, forward = true)
                 } else if (oneClickPause && isEnterKey(it)) {
                     val wasPlaying = player.isPlaying
                     Util.handlePlayPauseButtonAction(player)
@@ -67,13 +83,11 @@ class PlaybackKeyHandler(
                 }
 
                 Key.MediaFastForward, Key.MediaSkipForward -> {
-                    player.seekForward(seekForward)
-                    updateSkipIndicator(seekForward.inWholeMilliseconds)
+                    seekWithRecovery(seekForward, forward = true)
                 }
 
                 Key.MediaRewind, Key.MediaSkipBackward -> {
-                    player.seekBack(seekBack)
-                    updateSkipIndicator(-seekBack.inWholeMilliseconds)
+                    seekWithRecovery(seekBack, forward = false)
                 }
 
                 Key.MediaNext -> {

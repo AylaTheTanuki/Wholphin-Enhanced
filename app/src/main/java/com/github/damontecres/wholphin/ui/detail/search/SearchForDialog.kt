@@ -71,6 +71,8 @@ fun SearchForContent(
     LifecycleResumeEffect(Unit) {
         onPauseOrDispose {
             viewModel.voiceInputManager.stopListening()
+            keyboardController?.hide()
+            focusManager.clearFocus(force = true)
         }
     }
 
@@ -150,7 +152,7 @@ fun SearchForContent(
                             }.onPreviewKeyEvent { event ->
                                 val isActivationKey =
                                     event.key in listOf(Key.DirectionCenter, Key.Enter)
-                                if (event.type == KeyEventType.KeyUp && isActivationKey && !isSearchActive) {
+                if (event.type == KeyEventType.KeyUp && isActivationKey && !isSearchActive) {
                                     isSearchActive = true
                                     keyboardController?.show()
                                     true
@@ -201,7 +203,11 @@ fun SearchForContent(
                     ItemRow(
                         title = titleRes?.let { stringResource(it) } ?: "",
                         items = st.items,
-                        onClickItem = { _, item -> onClick.invoke(item) },
+                        onClickItem = { _, item ->
+                            keyboardController?.hide()
+                            focusManager.clearFocus(force = true)
+                            onClick.invoke(item)
+                        },
                         onLongClickItem = { _, _ -> },
                         modifier = Modifier.focusRequester(focusRequester),
                         cardContent = { index, item, mod, onClick, onLongClick ->

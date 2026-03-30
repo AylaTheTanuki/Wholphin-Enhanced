@@ -140,7 +140,16 @@ class NavDrawerService
                             type = it.collectionType,
                         )
                     }
-            val allItems = builtins + libraries
+            val sortedLibraries = libraries.sortedBy { item ->
+                when (item.type) {
+                    CollectionType.MOVIES -> 0
+                    CollectionType.TVSHOWS -> 1
+                    CollectionType.BOXSETS -> 2
+                    CollectionType.LIVETV -> 3
+                    else -> 4
+                }
+            }
+            val allItems = builtins + sortedLibraries
 
             val navDrawerPins =
                 serverPreferencesDao.getNavDrawerPinnedItems(user).associateBy { it.itemId }

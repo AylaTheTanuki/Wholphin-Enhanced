@@ -88,7 +88,6 @@ fun ItemCardImage(
                     imageUrlService.getItemImageUrl(
                         item,
                         resolvedImageType,
-                        fillWidth = size.width,
                         fillHeight = size.height,
                     )
                 }
@@ -146,7 +145,11 @@ fun ItemCardImage(
     ) {
         if (!imageError && imageUrl.isNotNullOrBlank()) {
             AsyncImage(
-                model = imageUrl,
+                model =
+                    buildCardImageRequest(
+                        context = androidx.compose.ui.platform.LocalContext.current,
+                        imageUrl = imageUrl,
+                    ),
                 contentDescription = name,
                 contentScale = contentScale,
                 alignment = Alignment.Center,

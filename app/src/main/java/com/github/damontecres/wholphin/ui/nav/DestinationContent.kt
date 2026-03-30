@@ -71,7 +71,7 @@ fun DestinationContent(
 
         is Destination.PlaybackList,
         is Destination.Playback,
-        -> {
+            -> {
             PlaybackPage(
                 preferences = preferences,
                 destination = destination,
@@ -96,6 +96,9 @@ fun DestinationContent(
         }
 
         is Destination.SeriesOverview -> {
+            // Refresh on exit to catch any watched/favorite changes made during the visit.
+            // No LaunchedEffect on enter — PlaybackPage already refreshes when the player exits,
+            // and firing both caused double state updates that shifted focus left twice.
             SeriesOverview(
                 preferences = preferences,
                 destination = destination,
@@ -105,6 +108,9 @@ fun DestinationContent(
         }
 
         is Destination.MediaItem -> {
+            // Refresh on exit to catch any watched/favorite changes made during the visit.
+            // No LaunchedEffect on enter — PlaybackPage already refreshes when the player exits,
+            // and firing both caused double state updates that shifted focus left twice.
             when (destination.type) {
                 BaseItemKind.SERIES -> {
                     SeriesDetails(
@@ -124,8 +130,7 @@ fun DestinationContent(
 
                 BaseItemKind.VIDEO,
                 BaseItemKind.MUSIC_VIDEO,
-                -> {
-                    // TODO Use VideoDetails
+                    -> {
                     MovieDetails(
                         preferences,
                         destination,
@@ -230,7 +235,7 @@ fun DestinationContent(
                 filter = destination.filter,
                 recursive = destination.recursive,
                 usePosters = true,
-                playEnabled = true, // TODO only genres use this currently, so might need to change in future
+                playEnabled = true,
                 filterOptions = DefaultForGenresFilterOptions,
                 modifier = modifier,
             )
@@ -388,7 +393,7 @@ fun CollectionFolder(
         CollectionType.MUSIC,
         CollectionType.BOOKS,
         CollectionType.PHOTOS,
-        -> {
+            -> {
             CollectionFolderGeneric(
                 preferences,
                 destination.itemId,
@@ -403,7 +408,7 @@ fun CollectionFolder(
         CollectionType.TRAILERS,
         CollectionType.UNKNOWN,
         null,
-        -> {
+            -> {
             CollectionFolderGeneric(
                 preferences,
                 destination.itemId,

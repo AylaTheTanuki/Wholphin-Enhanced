@@ -1,10 +1,10 @@
 <resources>
-    <string name="app_name" translatable="false">Movies &amp; Shows</string>
-    <string name="app_name_long" translatable="false">Movies &amp; Shows</string>
+    <string name="app_name" translatable="false">Wholphin Enhanced</string>
+    <string name="app_name_long" translatable="false">Wholphin Enhanced</string>
 
     <string name="about">About</string>
     <string name="active_recordings">Active Recordings</string>
-    <string name="add_favorite">Add to My List</string>
+    <string name="add_favorite">Favorite</string>
     <string name="add_server">Add Server</string>
     <string name="add_user">Add User</string>
     <string name="audio">Audio</string>
@@ -42,7 +42,7 @@
     <string name="episodes">Episodes</string>
     <string name="error_loading_collection">Error loading collection %1$s</string>
     <string name="external_track">External</string>
-    <string name="favorites">My List</string>
+    <string name="favorites">Favorites</string>
     <string name="file_size">Size</string>
     <string name="forced_track">Forced</string>
     <string name="genres">Genres</string>
@@ -98,7 +98,7 @@
     <string name="recommended">Recommended</string>
     <string name="record_program">Record Program</string>
     <string name="record_series">Record Series</string>
-    <string name="remove_favorite">Remove from My List</string>
+    <string name="remove_favorite">Unfavorite</string>
     <string name="restart">Restart</string>
     <string name="resume">Resume</string>
     <string name="save">Save</string>
@@ -110,6 +110,7 @@
     <string name="voice_search_prompt">Speak to search</string>
     <string name="processing">Processing</string>
     <string name="press_back_to_cancel">Press back to cancel</string>
+    <string name="press_back_again_to_exit">Press back again to exit</string>
     <string name="voice_error_audio">Audio recording error</string>
     <string name="voice_error_client">Voice recognition error</string>
     <string name="voice_error_permissions">Microphone permission required</string>
@@ -188,7 +189,7 @@
     <string name="samples">Samples</string>
     <string name="featurettes">Featurettes</string>
     <string name="shorts">Shorts</string>
-    <string name="favorite_items">My List %s</string>
+    <string name="favorite_items">Favorite %s</string>
 
     <plurals name="trailers">
         <item quantity="zero">Trailers</item>
@@ -317,6 +318,12 @@
     <string name="max_homepage_items">Max items on home page rows</string>
     <string name="nav_drawer_pins_summary">Choose the default items to show, others will be hidden</string>
     <string name="nav_drawer_pins">Customize Navigation Drawer Items</string>
+    <string name="movie_section_rows">Customize Movie Rows</string>
+    <string name="movie_section_rows_summary">Change the order of rows in the Movies section</string>
+    <string name="movie_watch_history">Movie History</string>
+    <string name="nineties_movies">90s Movies</string>
+    <string name="seventies_eighties_movies">70s &amp; 80s Movies</string>
+    <string name="sixties_and_earlier_movies">60s &amp; Earlier Movies</string>
     <string name="nav_drawer_switch_on_focus_summary_off">Click to switch pages</string>
     <string name="nav_drawer_switch_on_focus">Switch nav drawer pages on focus</string>
     <string name="pass_out_protection">Passout Protection</string>
@@ -614,7 +621,6 @@
     <string-array name="image_types">
         <item>Primary</item>
         <item>Thumb</item>
-        <!--        <item>Banner</item>-->
     </string-array>
 
     <string-array name="backdrop_style_options">

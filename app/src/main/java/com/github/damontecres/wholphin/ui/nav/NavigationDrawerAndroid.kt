@@ -21,6 +21,7 @@
 
 package com.github.damontecres.wholphin.ui.nav
 
+import android.os.SystemClock
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.VisibilityThreshold
@@ -42,6 +43,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.FocusState
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.layout.layout
@@ -57,11 +59,27 @@ import androidx.tv.material3.NavigationDrawerItemDefaults
 import androidx.tv.material3.NavigationDrawerScope
 import androidx.tv.material3.rememberDrawerState
 
+class DrawerOpenRequestGate {
+    private var requestedUntilUptimeMs: Long = 0L
+
+    fun mark(durationMs: Long = 300L) {
+        requestedUntilUptimeMs = SystemClock.uptimeMillis() + durationMs
+    }
+
+    fun isActive(): Boolean = SystemClock.uptimeMillis() <= requestedUntilUptimeMs
+
+    fun clear() {
+        requestedUntilUptimeMs = 0L
+    }
+}
+
 @Composable
 fun ModalNavigationDrawer(
     drawerContent: @Composable NavigationDrawerScope.(DrawerValue) -> Unit,
     modifier: Modifier = Modifier,
     drawerState: DrawerState = rememberDrawerState(DrawerValue.Closed),
+    autoOpenEnabled: Boolean = true,
+    drawerOpenRequestGate: DrawerOpenRequestGate,
     content: @Composable () -> Unit,
 ) {
     Box(modifier = modifier) {
@@ -70,6 +88,8 @@ fun ModalNavigationDrawer(
                 Modifier
                     .align(Alignment.CenterStart),
             drawerState = drawerState,
+            autoOpenEnabled = autoOpenEnabled,
+            drawerOpenRequestGate = drawerOpenRequestGate,
             content = drawerContent,
         )
 
@@ -81,6 +101,8 @@ fun ModalNavigationDrawer(
 private fun DrawerSheet(
     modifier: Modifier = Modifier,
     drawerState: DrawerState = remember { DrawerState() },
+    autoOpenEnabled: Boolean = true,
+    drawerOpenRequestGate: DrawerOpenRequestGate,
     content: @Composable NavigationDrawerScope.(DrawerValue) -> Unit,
 ) {
     // indicates that the drawer has been set to its initial state and has grabbed focus if
@@ -99,6 +121,9 @@ private fun DrawerSheet(
     val internalModifier =
         Modifier
             .focusRequester(focusRequester)
+            .focusProperties {
+                canFocus = drawerState.currentValue == DrawerValue.Open || drawerOpenRequestGate.isActive()
+            }
             .animateContentSize(
                 animationSpec =
                     spring(
@@ -113,7 +138,16 @@ private fun DrawerSheet(
                 focusState = it
 
                 if (initializationComplete) {
-                    drawerState.setValue(if (it.hasFocus) DrawerValue.Open else DrawerValue.Closed)
+                    if (it.hasFocus) {
+                        if (drawerState.currentValue == DrawerValue.Open || drawerOpenRequestGate.isActive()) {
+                            drawerState.setValue(DrawerValue.Open)
+                            drawerOpenRequestGate.clear()
+                        } else {
+                            drawerState.setValue(DrawerValue.Closed)
+                        }
+                    } else {
+                        drawerState.setValue(DrawerValue.Closed)
+                    }
                 }
             }.focusGroup()
 

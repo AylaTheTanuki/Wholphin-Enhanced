@@ -1,5 +1,10 @@
 package com.github.damontecres.wholphin.ui.nav
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
@@ -8,8 +13,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSerializable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
@@ -21,11 +31,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.navigation3.rememberViewModelStoreNavEntryDecorator
@@ -44,37 +57,65 @@ import coil3.request.ImageRequest
 import coil3.request.transitionFactory
 import com.github.damontecres.wholphin.data.model.JellyfinServer
 import com.github.damontecres.wholphin.data.model.JellyfinUser
+import com.github.damontecres.wholphin.R
 import com.github.damontecres.wholphin.preferences.BackdropStyle
 import com.github.damontecres.wholphin.preferences.UserPreferences
 import com.github.damontecres.wholphin.services.BackdropService
 import com.github.damontecres.wholphin.services.NavigationManager
 import com.github.damontecres.wholphin.ui.CrossFadeFactory
 import com.github.damontecres.wholphin.ui.components.ErrorMessage
+import com.github.damontecres.wholphin.ui.consumeCenterKeyUpAfterLongPress
 import com.github.damontecres.wholphin.ui.launchIO
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.delay
+import org.jellyfin.sdk.model.api.CollectionType
+import timber.log.Timber
 import javax.inject.Inject
 import kotlin.time.Duration.Companion.milliseconds
 
-// Top scrim configuration for text readability (clock, season tabs)
 private const val TOP_SCRIM_ALPHA = 0.55f
-private const val TOP_SCRIM_END_FRACTION = 0.25f // Fraction of backdrop image height
+private const val TOP_SCRIM_END_FRACTION = 0.25f
+private const val BACKDROP_TRANSITION_DURATION_MS = 350
+private const val DOUBLE_BACK_EXIT_WINDOW_MS = 2000L
+
+private tailrec fun Context.findActivity(): Activity? =
+    when (this) {
+        is Activity -> this
+        is ContextWrapper -> baseContext.findActivity()
+        else -> null
+    }
+
+private fun shouldUseDoubleBackExit(backStack: List<NavKey>): Boolean {
+    val currentDestination = backStack.lastOrNull() as? Destination ?: return false
+    if (backStack.size == 1) {
+        return currentDestination is Destination.Home
+    }
+
+    val rootDestination = backStack.firstOrNull() as? Destination ?: return false
+    if (backStack.size != 2 || rootDestination !is Destination.Home) {
+        return false
+    }
+
+    return when (currentDestination) {
+        is Destination.MediaItem ->
+            currentDestination.collectionType == CollectionType.MOVIES ||
+                currentDestination.collectionType == CollectionType.TVSHOWS
+
+        else -> false
+    }
+}
 
 @HiltViewModel
 class ApplicationContentViewModel
-    @Inject
-    constructor(
-        val backdropService: BackdropService,
-    ) : ViewModel() {
-        fun clearBackdrop() {
-            viewModelScope.launchIO { backdropService.clearBackdrop() }
-        }
+@Inject
+constructor(
+    val backdropService: BackdropService,
+) : ViewModel() {
+    fun clearBackdrop() {
+        viewModelScope.launchIO { backdropService.clearBackdrop() }
     }
+}
 
-/**
- * This is generally the root composable of the of the app
- *
- * Here the navigation backstack is used and pages are rendered in the nav drawer or full screen
- */
 @Composable
 fun ApplicationContent(
     server: JellyfinServer,
@@ -87,6 +128,7 @@ fun ApplicationContent(
     onInteraction: () -> Unit = {},
     viewModel: ApplicationContentViewModel = hiltViewModel(),
 ) {
+    val context = LocalContext.current
     val backStack: MutableList<NavKey> =
         rememberSerializable(
             server,
@@ -99,29 +141,92 @@ fun ApplicationContent(
     val backdrop by viewModel.backdropService.backdropFlow.collectAsStateWithLifecycle()
     val backdropStyle = preferences.appPreferences.interfacePreferences.backdropStyle
     val drawerState = rememberDrawerState(DrawerValue.Closed)
+    val drawerOpenRequestGate = remember { DrawerOpenRequestGate() }
+    var lastBackPressAt by remember { mutableStateOf(0L) }
+    var drawerAutoOpenEnabled by remember { mutableStateOf(false) }
+    var drawerAutoOpenEpoch by remember { mutableIntStateOf(0) }
+    var previousDestination by remember { mutableStateOf(startDestination) }
+    var previousDestinationWasFullScreen by remember { mutableStateOf(startDestination.fullScreen) }
+    LaunchedEffect(drawerAutoOpenEpoch) {
+        drawerAutoOpenEnabled = false
+        delay(350)
+        drawerAutoOpenEnabled = true
+    }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        drawerState.setValue(DrawerValue.Closed)
+        drawerAutoOpenEpoch++
+    }
+    LaunchedEffect(backStack.lastOrNull()) {
+        val currentDestination = backStack.lastOrNull() as? Destination ?: return@LaunchedEffect
+        val destinationChanged = currentDestination != previousDestination
+        if (!currentDestination.fullScreen && (destinationChanged || previousDestinationWasFullScreen)) {
+            drawerState.setValue(DrawerValue.Closed)
+            drawerAutoOpenEpoch++
+        }
+        previousDestination = currentDestination
+        previousDestinationWasFullScreen = currentDestination.fullScreen
+    }
+    val doubleBackExitEnabled =
+        drawerState.currentValue == DrawerValue.Closed &&
+            shouldUseDoubleBackExit(navigationManager.backStack.toList())
+    LaunchedEffect(doubleBackExitEnabled, navigationManager.backStack.lastOrNull()) {
+        if (!doubleBackExitEnabled) {
+            lastBackPressAt = 0L
+        }
+    }
+    BackHandler(enabled = doubleBackExitEnabled) {
+        val now = System.currentTimeMillis()
+        if (now - lastBackPressAt <= DOUBLE_BACK_EXIT_WINDOW_MS) {
+            context.findActivity()?.finish()
+        } else {
+            lastBackPressAt = now
+            Toast
+                .makeText(
+                    context,
+                    context.getString(R.string.press_back_again_to_exit),
+                    Toast.LENGTH_SHORT,
+                ).show()
+        }
+    }
     Box(
-        modifier = modifier.onKeyEvent { 
-            onInteraction()
-            false 
-        },
+        modifier =
+            modifier
+                .onPreviewKeyEvent {
+                    when (it.nativeKeyEvent.keyCode) {
+                        android.view.KeyEvent.KEYCODE_DPAD_LEFT,
+                        android.view.KeyEvent.KEYCODE_SYSTEM_NAVIGATION_LEFT,
+                            -> {
+                                if (it.nativeKeyEvent.action == android.view.KeyEvent.ACTION_DOWN) {
+                                    drawerOpenRequestGate.mark()
+                                }
+                            }
+                    }
+                    false
+                }
+                .consumeCenterKeyUpAfterLongPress()
+                .onKeyEvent {
+                    onInteraction()
+                    false
+                },
     ) {
         val baseBackgroundColor = MaterialTheme.colorScheme.background
-        if (backdrop.hasColors &&
+        if (
+            backdrop.hasColors &&
             (backdropStyle == BackdropStyle.BACKDROP_DYNAMIC_COLOR || backdropStyle == BackdropStyle.UNRECOGNIZED)
         ) {
             val animPrimary by animateColorAsState(
                 backdrop.primaryColor,
-                animationSpec = tween(1250),
+                animationSpec = tween(BACKDROP_TRANSITION_DURATION_MS),
                 label = "dynamic_backdrop_primary",
             )
             val animSecondary by animateColorAsState(
                 backdrop.secondaryColor,
-                animationSpec = tween(1250),
+                animationSpec = tween(BACKDROP_TRANSITION_DURATION_MS),
                 label = "dynamic_backdrop_secondary",
             )
             val animTertiary by animateColorAsState(
                 backdrop.tertiaryColor,
-                animationSpec = tween(1250),
+                animationSpec = tween(BACKDROP_TRANSITION_DURATION_MS),
                 label = "dynamic_backdrop_tertiary",
             )
             Box(
@@ -130,7 +235,6 @@ fun ApplicationContent(
                         .fillMaxSize()
                         .drawBehind {
                             drawRect(color = baseBackgroundColor)
-                            // Top Left (Vibrant/Muted)
                             drawRect(
                                 brush =
                                     Brush.radialGradient(
@@ -139,7 +243,6 @@ fun ApplicationContent(
                                         radius = size.width * 0.8f,
                                     ),
                             )
-                            // Bottom Right (DarkVibrant/DarkMuted)
                             drawRect(
                                 brush =
                                     Brush.radialGradient(
@@ -148,7 +251,6 @@ fun ApplicationContent(
                                         radius = size.width * 0.8f,
                                     ),
                             )
-                            // Bottom Left (Dark / Bridge)
                             drawRect(
                                 brush =
                                     Brush.radialGradient(
@@ -161,7 +263,6 @@ fun ApplicationContent(
                                         radius = size.width * 0.8f,
                                     ),
                             )
-                            // Top Right (Under Image - Vibrant/Bright)
                             drawRect(
                                 brush =
                                     Brush.radialGradient(
@@ -182,7 +283,7 @@ fun ApplicationContent(
                         ImageRequest
                             .Builder(LocalContext.current)
                             .data(backdrop.imageUrl)
-                            .transitionFactory(CrossFadeFactory(800.milliseconds))
+                            .transitionFactory(CrossFadeFactory(BACKDROP_TRANSITION_DURATION_MS.milliseconds))
                             .build(),
                     contentDescription = null,
                     contentScale = ContentScale.Fit,
@@ -201,7 +302,6 @@ fun ApplicationContent(
                                         alpha = .75f,
                                     )
                                 }
-                                // Subtle top scrim for system UI readability (clock, tabs)
                                 if (enableTopScrim) {
                                     drawRect(
                                         brush =
@@ -264,11 +364,14 @@ fun ApplicationContent(
                             user = user,
                             server = server,
                             drawerState = drawerState,
+                            autoOpenEnabled = drawerAutoOpenEnabled,
+                            drawerOpenRequestGate = drawerOpenRequestGate,
                             navDrawerListState = navDrawerListState,
                             onClearBackdrop = viewModel::clearBackdrop,
                             modifier = Modifier.fillMaxSize(),
                         )
                     } else {
+                        Timber.e("BREADCRUMB: APPCONTENT - Session ERROR in NavEntry")
                         ErrorMessage("Trying to go to $key without a user logged in", null)
                     }
                 }

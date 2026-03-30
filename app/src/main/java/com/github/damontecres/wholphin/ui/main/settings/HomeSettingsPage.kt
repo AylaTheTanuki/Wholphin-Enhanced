@@ -306,6 +306,7 @@ fun HomeSettingsPage(
             onClickPlay = { _, _ -> },
             showClock = false,
             onUpdateBackdrop = viewModel::updateBackdrop,
+            onHideBackdropImage = viewModel::hideBackdropImage,
             listState = listState,
             takeFocus = false,
             showEmptyRows = true,

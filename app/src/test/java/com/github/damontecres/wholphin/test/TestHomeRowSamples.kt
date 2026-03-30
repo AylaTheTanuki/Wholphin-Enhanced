@@ -72,6 +72,8 @@ class TestHomeRowSamples {
                     viewOptions = HomeRowViewOptions(),
                 ),
                 HomeRowConfig.Favorite(kind = BaseItemKind.SERIES),
+                HomeRowConfig.MyList(),
+                HomeRowConfig.MovieWatchHistory(),
                 HomeRowConfig.Recordings(),
                 HomeRowConfig.TvPrograms(),
                 HomeRowConfig.TvChannels(),
@@ -94,11 +96,12 @@ class TestHomeRowSamples {
                 is HomeRowConfig.ByParent -> foundTypes.add(it::class)
                 is HomeRowConfig.GetItems -> foundTypes.add(it::class)
                 is HomeRowConfig.Favorite -> foundTypes.add(it::class)
+                is HomeRowConfig.MyList -> foundTypes.add(it::class)
+                is HomeRowConfig.MovieWatchHistory -> foundTypes.add(it::class)
                 is HomeRowConfig.Recordings -> foundTypes.add(it::class)
                 is HomeRowConfig.TvPrograms -> foundTypes.add(it::class)
                 is HomeRowConfig.Suggestions -> foundTypes.add(it::class)
                 is HomeRowConfig.TvChannels -> foundTypes.add(it::class)
-                is HomeRowConfig.MyList -> foundTypes.add(it::class) // <-- The missing link!
             }
         }
         Assert.assertEquals(HomeRowConfig::class.sealedSubclasses.size, foundTypes.size)

@@ -72,9 +72,10 @@ fun ExpandablePlayButtons(
     moreOnClick: () -> Unit,
     trailerOnClick: (Trailer) -> Unit,
     buttonOnFocusChanged: (FocusState) -> Unit,
+    firstButtonFocusRequester: FocusRequester? = null,
     modifier: Modifier = Modifier,
 ) {
-    val firstFocus = remember { FocusRequester() }
+    val firstFocus = firstButtonFocusRequester ?: remember { FocusRequester() }
     LazyRow(
         horizontalArrangement = Arrangement.spacedBy(16.dp),
         contentPadding = PaddingValues(8.dp),

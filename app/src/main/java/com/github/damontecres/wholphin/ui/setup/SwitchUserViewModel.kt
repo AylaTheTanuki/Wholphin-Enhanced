@@ -39,220 +39,223 @@ import kotlin.time.Duration.Companion.seconds
 
 @HiltViewModel(assistedFactory = SwitchUserViewModel.Factory::class)
 class SwitchUserViewModel
-    @AssistedInject
-    constructor(
-        val jellyfin: Jellyfin,
-        val serverRepository: ServerRepository,
-        val serverDao: JellyfinServerDao,
-        val navigationManager: NavigationManager,
-        val setupNavigationManager: SetupNavigationManager,
-        val imageUrlService: ImageUrlService,
-        @Assisted val server: JellyfinServer,
-    ) : ViewModel() {
-        @AssistedFactory
-        interface Factory {
-            fun create(server: JellyfinServer): SwitchUserViewModel
-        }
+@AssistedInject
+constructor(
+    val jellyfin: Jellyfin,
+    val serverRepository: ServerRepository,
+    val serverDao: JellyfinServerDao,
+    val navigationManager: NavigationManager,
+    val setupNavigationManager: SetupNavigationManager,
+    val imageUrlService: ImageUrlService,
+    @Assisted val server: JellyfinServer,
+) : ViewModel() {
+    @AssistedFactory
+    interface Factory {
+        fun create(server: JellyfinServer): SwitchUserViewModel
+    }
 
-        val serverQuickConnect = MutableLiveData<Boolean>(false)
+    val serverQuickConnect = MutableLiveData<Boolean>(false)
 
-        val users = MutableLiveData<List<JellyfinUserAndImage>>(listOf())
-        val quickConnectState = MutableLiveData<QuickConnectResult?>(null)
+    val users = MutableLiveData<List<JellyfinUserAndImage>>(listOf())
+    val quickConnectState = MutableLiveData<QuickConnectResult?>(null)
 
-        private var quickConnectJob: Job? = null
+    private var quickConnectJob: Job? = null
 
-        val switchUserState = MutableLiveData<LoadingState>(LoadingState.Pending)
+    val switchUserState = MutableLiveData<LoadingState>(LoadingState.Pending)
 
-        val loginAttempts = MutableLiveData(0)
+    val loginAttempts = MutableLiveData(0)
 
-        fun clearSwitchUserState() {
-            switchUserState.value = LoadingState.Pending
-        }
+    fun clearSwitchUserState() {
+        switchUserState.value = LoadingState.Pending
+    }
 
-        fun resetAttempts() {
-            loginAttempts.value = 0
-        }
+    fun resetAttempts() {
+        loginAttempts.value = 0
+    }
 
-        init {
-            init()
-        }
+    init {
+        init()
+    }
 
-        fun init() {
-            viewModelScope.launch(Dispatchers.Main + ExceptionHandler()) {
-                serverRepository.switchServerOrUser()
+    fun init() {
+        // switchServerOrUser() has been intentionally removed from here.
+        // It was unconditionally clearing the persisted session IDs from DataStore
+        // every time this ViewModel was created, including when it was created as a
+        // side effect of favoriting an item on the home screen. changeUser() already
+        // writes the correct IDs when a user actually selects an account, so clearing
+        // them here served no purpose and caused a logout-on-next-launch bug.
+        quickConnectJob?.cancel()
+        viewModelScope.launchIO {
+            users.setValueOnMain(listOf())
+            val serverUsers = getUsers()
+            withContext(Dispatchers.Main) {
+                users.setValueOnMain(serverUsers)
             }
-            quickConnectJob?.cancel()
-            viewModelScope.launchIO {
-                users.setValueOnMain(listOf())
-                val serverUsers = getUsers()
+        }
+
+        viewModelScope.launchIO {
+            try {
+                jellyfin
+                    .createApi(
+                        server.url,
+                        httpClientOptions =
+                            HttpClientOptions(
+                                requestTimeout = 6.seconds,
+                                connectTimeout = 6.seconds,
+                                socketTimeout = 6.seconds,
+                            ),
+                    ).systemApi
+                    .getPublicSystemInfo()
+                val quickConnect by
+                jellyfin
+                    .createApi(server.url)
+                    .quickConnectApi
+                    .getQuickConnectEnabled()
                 withContext(Dispatchers.Main) {
-                    users.setValueOnMain(serverUsers)
+                    serverQuickConnect.value = quickConnect
                 }
-            }
-
-            viewModelScope.launchIO {
-                try {
-                    jellyfin
-                        .createApi(
-                            server.url,
-                            httpClientOptions =
-                                HttpClientOptions(
-                                    requestTimeout = 6.seconds,
-                                    connectTimeout = 6.seconds,
-                                    socketTimeout = 6.seconds,
-                                ),
-                        ).systemApi
-                        .getPublicSystemInfo()
-                    val quickConnect by
-                        jellyfin
-                            .createApi(server.url)
-                            .quickConnectApi
-                            .getQuickConnectEnabled()
-                    withContext(Dispatchers.Main) {
-                        serverQuickConnect.value = quickConnect
-                    }
-                } catch (ex: Exception) {
-                    Timber.w(ex, "Error checking quick connect for server ${server.url}")
-                    withContext(Dispatchers.Main) {
-                        serverQuickConnect.value = false
-                    }
+            } catch (ex: Exception) {
+                Timber.w(ex, "Error checking quick connect for server ${server.url}")
+                withContext(Dispatchers.Main) {
+                    serverQuickConnect.value = false
                 }
             }
         }
+    }
 
-        fun switchUser(user: JellyfinUser) {
+    fun switchUser(user: JellyfinUser) {
+        viewModelScope.launchIO {
+            try {
+                val current = serverRepository.changeUser(server, user)
+                if (current != null) {
+                    withContext(Dispatchers.Main) {
+                        setupNavigationManager.navigateTo(SetupDestination.AppContent(current))
+                    }
+                }
+            } catch (ex: Exception) {
+                Timber.e(ex, "Error switching user")
+                setError("Error switching user", ex)
+            }
+        }
+    }
+
+    fun login(
+        server: JellyfinServer,
+        username: String,
+        password: String,
+    ) {
+        quickConnectJob?.cancel()
+        viewModelScope.launchIO {
+            try {
+                val api = jellyfin.createApi(baseUrl = server.url)
+                val authenticationResult by api.userApi.authenticateUserByName(
+                    username = username,
+                    password = password,
+                )
+                val current = serverRepository.changeUser(server.url, authenticationResult)
+                if (current != null) {
+                    withContext(Dispatchers.Main) {
+                        setupNavigationManager.navigateTo(SetupDestination.AppContent(current))
+                    }
+                }
+            } catch (ex: Exception) {
+                Timber.e(ex, "Error logging in user")
+                if (ex is InvalidStatusException && ex.status == 401) {
+                    withContext(Dispatchers.Main) {
+                        switchUserState.value =
+                            LoadingState.Error("Invalid username or password")
+                    }
+                } else {
+                    setError("Error during login", ex)
+                }
+            }
+        }
+    }
+
+    fun initiateQuickConnect(server: JellyfinServer) {
+        quickConnectJob?.cancel()
+        quickConnectJob =
             viewModelScope.launchIO {
                 try {
-                    val current = serverRepository.changeUser(server, user)
-                    if (current != null) {
+                    val api = jellyfin.createApi(server.url)
+                    var state =
+                        api
+                            .quickConnectApi
+                            .initiateQuickConnect()
+                            .content
+
+                    withContext(Dispatchers.Main) {
+                        quickConnectState.value = state
+                    }
+
+                    while (!state.authenticated) {
+                        delay(5_000L)
+                        state =
+                            api.quickConnectApi
+                                .getQuickConnectState(
+                                    secret = state.secret,
+                                ).content
                         withContext(Dispatchers.Main) {
-                            setupNavigationManager.navigateTo(SetupDestination.AppContent(current))
+                            quickConnectState.value = state
                         }
                     }
-                } catch (ex: Exception) {
-                    Timber.e(ex, "Error switching user")
-                    setError("Error switching user", ex)
-                }
-            }
-        }
-
-        fun login(
-            server: JellyfinServer,
-            username: String,
-            password: String,
-        ) {
-            quickConnectJob?.cancel()
-            viewModelScope.launchIO {
-                try {
-                    val api = jellyfin.createApi(baseUrl = server.url)
-                    val authenticationResult by api.userApi.authenticateUserByName(
-                        username = username,
-                        password = password,
+                    val authenticationResult by api.userApi.authenticateWithQuickConnect(
+                        QuickConnectDto(secret = state.secret),
                     )
                     val current = serverRepository.changeUser(server.url, authenticationResult)
                     if (current != null) {
                         withContext(Dispatchers.Main) {
-                            setupNavigationManager.navigateTo(SetupDestination.AppContent(current))
+                            setupNavigationManager.navigateTo(
+                                SetupDestination.AppContent(current),
+                            )
                         }
                     }
                 } catch (ex: Exception) {
-                    Timber.e(ex, "Error logging in user")
+                    Timber.e(ex, "Error during quick connect")
                     if (ex is InvalidStatusException && ex.status == 401) {
                         withContext(Dispatchers.Main) {
-                            switchUserState.value =
-                                LoadingState.Error("Invalid username or password")
+                            quickConnectState.value = null
+                            serverQuickConnect.value = false
                         }
-                    } else {
-                        setError("Error during login", ex)
                     }
+                    setError("Error with Quick Connect", ex)
                 }
             }
-        }
+    }
 
-        fun initiateQuickConnect(server: JellyfinServer) {
-            quickConnectJob?.cancel()
-            quickConnectJob =
-                viewModelScope.launchIO {
-                    try {
-                        val api = jellyfin.createApi(server.url)
-                        var state =
-                            api
-                                .quickConnectApi
-                                .initiateQuickConnect()
-                                .content
+    fun cancelQuickConnect() {
+        quickConnectJob?.cancel()
+        quickConnectState.value = null
+    }
 
-                        withContext(Dispatchers.Main) {
-                            quickConnectState.value = state
-                        }
-
-                        while (!state.authenticated) {
-                            delay(5_000L)
-                            state =
-                                api.quickConnectApi
-                                    .getQuickConnectState(
-                                        secret = state.secret,
-                                    ).content
-                            withContext(Dispatchers.Main) {
-                                quickConnectState.value = state
-                            }
-                        }
-                        val authenticationResult by api.userApi.authenticateWithQuickConnect(
-                            QuickConnectDto(secret = state.secret),
-                        )
-                        val current = serverRepository.changeUser(server.url, authenticationResult)
-                        if (current != null) {
-                            withContext(Dispatchers.Main) {
-                                setupNavigationManager.navigateTo(
-                                    SetupDestination.AppContent(current),
-                                )
-                            }
-                        }
-                    } catch (ex: Exception) {
-                        Timber.e(ex, "Error during quick connect")
-                        if (ex is InvalidStatusException && ex.status == 401) {
-                            withContext(Dispatchers.Main) {
-                                quickConnectState.value = null
-                                serverQuickConnect.value = false
-                            }
-                        }
-                        setError("Error with Quick Connect", ex)
-                    }
-                }
-        }
-
-        fun cancelQuickConnect() {
-            quickConnectJob?.cancel()
-            quickConnectState.value = null
-        }
-
-        fun removeUser(user: JellyfinUser) {
-            viewModelScope.launchIO {
-                serverRepository.removeUser(user)
-                val serverUsers = getUsers()
-                withContext(Dispatchers.Main) {
-                    users.value = serverUsers
-                }
+    fun removeUser(user: JellyfinUser) {
+        viewModelScope.launchIO {
+            serverRepository.removeUser(user)
+            val serverUsers = getUsers()
+            withContext(Dispatchers.Main) {
+                users.value = serverUsers
             }
-        }
-
-        private suspend fun getUsers(): List<JellyfinUserAndImage> {
-            val api = jellyfin.createApi(server.url)
-            return serverDao
-                .getServer(server.id)
-                ?.users
-                ?.sortedBy { it.name }
-                ?.map { JellyfinUserAndImage(it, api.imageApi.getUserImageUrl(it.id)) }
-                .orEmpty()
-        }
-
-        private suspend fun setError(
-            msg: String? = null,
-            ex: Exception? = null,
-        ) = withContext(Dispatchers.Main) {
-            loginAttempts.value = (loginAttempts.value ?: 0) + 1
-            switchUserState.value = LoadingState.Error(msg, ex)
         }
     }
+
+    private suspend fun getUsers(): List<JellyfinUserAndImage> {
+        val api = jellyfin.createApi(server.url)
+        return serverDao
+            .getServer(server.id)
+            ?.users
+            ?.sortedBy { it.name }
+            ?.map { JellyfinUserAndImage(it, api.imageApi.getUserImageUrl(it.id)) }
+            .orEmpty()
+    }
+
+    private suspend fun setError(
+        msg: String? = null,
+        ex: Exception? = null,
+    ) = withContext(Dispatchers.Main) {
+        loginAttempts.value = (loginAttempts.value ?: 0) + 1
+        switchUserState.value = LoadingState.Error(msg, ex)
+    }
+}
 
 data class JellyfinUserAndImage(
     val user: JellyfinUser,

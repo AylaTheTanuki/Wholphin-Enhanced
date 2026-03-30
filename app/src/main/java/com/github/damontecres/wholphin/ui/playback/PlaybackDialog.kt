@@ -30,6 +30,7 @@ import androidx.tv.material3.Text
 import androidx.tv.material3.surfaceColorAtElevation
 import com.github.damontecres.wholphin.R
 import com.github.damontecres.wholphin.data.model.TrackIndex
+import com.github.damontecres.wholphin.preferences.AppPreference
 import com.github.damontecres.wholphin.services.syncplay.SyncPlayManager
 import com.github.damontecres.wholphin.ui.AppColors
 import com.github.damontecres.wholphin.ui.components.SelectedLeadingContent
@@ -61,6 +62,28 @@ data class PlaybackSettings(
     val subtitleDelay: Duration,
     val hasSubtitleDownloadPermission: Boolean,
 )
+
+private val manualVideoQualityPresets: List<Pair<Int?, String>> =
+    listOf(
+        null to "Direct Play",
+        120000000 to "120 Mbps - Maximum Quality",
+        40000000 to "40 Mbps - Very High Quality",
+        10000000 to "10 Mbps - High Quality",
+        4000000 to "4 Mbps - Medium Quality",
+        1500000 to "1.5 Mbps - Low Quality",
+    )
+
+private fun manualVideoQualityLabel(bitrate: Long?): String? =
+    manualVideoQualityPresets.firstOrNull { it.first?.toLong() == bitrate }?.second
+
+private fun manualVideoQualityChoice(maxBitrate: Long): Int? =
+    when {
+        maxBitrate >= AppPreference.DEFAULT_BITRATE -> null
+        else -> manualVideoQualityPresets.firstOrNull { it.first?.toLong() == maxBitrate }?.first
+    }
+
+private fun manualVideoQualitySummary(maxBitrate: Long): String =
+    manualVideoQualityLabel(manualVideoQualityChoice(maxBitrate)?.toLong()) ?: "Direct Play"
 
 @Composable
 fun PlaybackDialog(
@@ -147,14 +170,7 @@ fun PlaybackDialog(
                         BottomDialogItem(
                             data = PlaybackDialogType.VIDEO_QUALITY,
                             headline = stringResource(R.string.video),
-                            supporting = when (settings.maxBitrate) {
-                                120000000L -> "Automatic (Direct Play)"
-                                40000000L -> "4K - 40 Mbps"
-                                10000000L -> "1080p - 10 Mbps"
-                                4000000L -> "720p - 4 Mbps"
-                                1500000L -> "480p - 1.5 Mbps"
-                                else -> "Automatic (Direct Play)"
-                            }
+                            supporting = manualVideoQualitySummary(settings.maxBitrate),
                         ),
                     )
                     add(
@@ -210,29 +226,18 @@ fun PlaybackDialog(
         }
 
         PlaybackDialogType.VIDEO_QUALITY -> {
-            val bitrates: List<Pair<Int?, String>> = listOf(
-                null to "Automatic (Direct Play)",
-                120000000 to "4K - 120 Mbps",
-                40000000 to "4K - 40 Mbps",
-                10000000 to "1080p - 10 Mbps",
-                4000000 to "720p - 4 Mbps",
-                1500000 to "480p - 1.5 Mbps"
-            )
-
-            // FIXED THE GENERIC TYPE ERROR HERE by typing it to "Int?"
-            val choices: List<BottomDialogItem<Int?>> = bitrates.map { (bitrate, name) ->
-                BottomDialogItem(
-                    data = bitrate,
-                    headline = name,
-                    supporting = null
-                )
-            }
+            val choices: List<BottomDialogItem<Int?>> =
+                manualVideoQualityPresets.map { (bitrate, name) ->
+                    BottomDialogItem(
+                        data = bitrate,
+                        headline = name,
+                        supporting = null,
+                    )
+                }
 
             BottomDialog(
                 choices = choices,
-                currentChoice = choices.firstOrNull {
-                    it.data?.toLong() == settings.maxBitrate || (it.data == null && settings.maxBitrate == 120000000L)
-                },
+                currentChoice = choices.firstOrNull { it.data == manualVideoQualityChoice(settings.maxBitrate) },
                 onDismissRequest = {
                     onControllerInteraction.invoke()
                     onDismissRequest.invoke()

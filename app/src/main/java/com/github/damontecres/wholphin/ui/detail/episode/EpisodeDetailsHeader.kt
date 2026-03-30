@@ -10,7 +10,6 @@ import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -42,7 +41,6 @@ fun EpisodeDetailsHeader(
 ) {
     val dto = ep.data
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     Column(
         verticalArrangement = Arrangement.spacedBy(8.dp),
         modifier = modifier,
@@ -76,7 +74,9 @@ fun EpisodeDetailsHeader(
                 val interactionSource = remember { MutableInteractionSource() }
                 val focused = interactionSource.collectIsFocusedAsState().value
                 LaunchedEffect(focused) {
-                    if (focused) bringIntoViewRequester.bringIntoView()
+                    if (focused) {
+                        bringIntoViewRequester.bringIntoView()
+                    }
                 }
                 OverviewText(
                     overview = overview,

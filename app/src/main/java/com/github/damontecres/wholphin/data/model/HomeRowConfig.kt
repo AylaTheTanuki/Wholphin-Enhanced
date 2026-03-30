@@ -122,6 +122,17 @@ sealed interface HomeRowConfig {
     }
 
     /**
+     * Movies the user has already watched, ordered by watch date descending
+     */
+    @Serializable
+    @SerialName("MovieWatchHistory")
+    data class MovieWatchHistory(
+        override val viewOptions: HomeRowViewOptions = HomeRowViewOptions(),
+    ) : HomeRowConfig {
+        override fun updateViewOptions(viewOptions: HomeRowViewOptions): MovieWatchHistory = this.copy(viewOptions = viewOptions)
+    }
+
+    /**
      * Currently recording
      */
     @Serializable

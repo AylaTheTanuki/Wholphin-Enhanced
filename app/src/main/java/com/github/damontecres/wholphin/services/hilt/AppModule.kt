@@ -29,6 +29,7 @@ import org.jellyfin.sdk.api.okhttp.OkHttpFactory
 import org.jellyfin.sdk.createJellyfin
 import org.jellyfin.sdk.model.ClientInfo
 import org.jellyfin.sdk.model.DeviceInfo
+import timber.log.Timber
 import javax.inject.Qualifier
 import javax.inject.Singleton
 
@@ -73,6 +74,24 @@ object AppModule {
     fun okHttpClient() =
         OkHttpClient
             .Builder()
+            // --- THE DIAGNOSTIC LOGGER ---
+            .addInterceptor { chain ->
+                val request = chain.request()
+                Timber.d("WHOLPHIN-NET: [SENDING] ${request.method} ${request.url}")
+
+                try {
+                    val response = chain.proceed(request)
+                    if (!response.isSuccessful) {
+                        Timber.e("WHOLPHIN-NET: [FAILED - HTTP ${response.code}] ${request.url}")
+                    } else {
+                        Timber.v("WHOLPHIN-NET: [SUCCESS - HTTP ${response.code}] ${request.url}")
+                    }
+                    return@addInterceptor response
+                } catch (e: Exception) {
+                    Timber.e(e, "WHOLPHIN-NET: [CRITICAL EXCEPTION] Connection dropped on: ${request.url}")
+                    throw e
+                }
+            }
             .apply {
                 // TODO user agent, timeouts, logging, etc
             }.build()

@@ -34,213 +34,214 @@ import javax.inject.Singleton
  */
 @Singleton
 class ServerRepository
-    @Inject
-    constructor(
-        @param:ApplicationContext private val context: Context,
-        val jellyfin: Jellyfin,
-        val serverDao: JellyfinServerDao,
-        val apiClient: ApiClient,
-        val userPreferencesDataStore: DataStore<AppPreferences>,
-    ) {
-        private val sharedPreferences = getServerSharedPreferences(context)
+@Inject
+constructor(
+    @param:ApplicationContext private val context: Context,
+    val jellyfin: Jellyfin,
+    val serverDao: JellyfinServerDao,
+    val apiClient: ApiClient,
+    val userPreferencesDataStore: DataStore<AppPreferences>,
+) {
+    private val sharedPreferences = getServerSharedPreferences(context)
 
-        private var _current = EqualityMutableLiveData<CurrentUser?>(null)
-        val current: LiveData<CurrentUser?> = _current
+    private var _current = EqualityMutableLiveData<CurrentUser?>(null)
+    val current: LiveData<CurrentUser?> = _current
 
-        private var _currentUserDto = EqualityMutableLiveData<UserDto?>(null)
-        val currentUserDto: LiveData<UserDto?> = _currentUserDto
+    private var _currentUserDto = EqualityMutableLiveData<UserDto?>(null)
+    val currentUserDto: LiveData<UserDto?> = _currentUserDto
 
-        val currentServer: LiveData<JellyfinServer?> get() = _current.map { it?.server }
-        val currentUser: LiveData<JellyfinUser?> get() = _current.map { it?.user }
+    val currentServer: LiveData<JellyfinServer?> get() = _current.map { it?.server }
+    val currentUser: LiveData<JellyfinUser?> get() = _current.map { it?.user }
 
-        /**
-         * Adds a server to the app database and updated the [ApiClient] to the server's URL
-         *
-         * The current user is removed
-         */
-        suspend fun addAndChangeServer(server: JellyfinServer) {
-            withContext(Dispatchers.IO) {
-                serverDao.addOrUpdateServer(server)
+    /**
+     * Adds a server to the app database and updated the [ApiClient] to the server's URL
+     *
+     * The current user is removed
+     */
+    suspend fun addAndChangeServer(server: JellyfinServer) {
+        Timber.d("BREADCRUMB: SESSION - addAndChangeServer called")
+        withContext(Dispatchers.IO) {
+            serverDao.addOrUpdateServer(server)
+        }
+        apiClient.update(baseUrl = server.url, accessToken = null)
+        _current.setValueOnMain(null)
+    }
+
+    /**
+     * Saves the server & User to the app database and updates the [ApiClient] to use this server & user
+     */
+    suspend fun changeUser(
+        server: JellyfinServer,
+        user: JellyfinUser,
+    ): CurrentUser? =
+        withContext(Dispatchers.IO) {
+            if (server.id != user.serverId) {
+                throw IllegalStateException("User is not part of the server")
             }
-            apiClient.update(baseUrl = server.url, accessToken = null)
-            _current.setValueOnMain(null)
+            Timber.d("BREADCRUMB: SESSION - changeUser starting for user: ${user.name}")
+            apiClient.update(baseUrl = server.url, accessToken = user.accessToken)
+
+            var userDto: UserDto? = null
+            val updatedServer = try {
+                Timber.d("BREADCRUMB: SESSION - Fetching CurrentUser and SystemInfo from server")
+                val fetchedUserDto by apiClient.userApi.getCurrentUser()
+                userDto = fetchedUserDto
+                val sysInfo by apiClient.systemApi.getPublicSystemInfo()
+                server.copy(name = sysInfo.serverName, version = sysInfo.version)
+            } catch (ex: Exception) {
+                Timber.w(ex, "BREADCRUMB: SESSION - Network stutter in changeUser! Catching to prevent crash.")
+                server
+            }
+
+            var updatedUser = user
+            if (userDto != null) {
+                updatedUser = user.copy(
+                    id = userDto.id,
+                    name = userDto.name,
+                )
+            }
+
+            serverDao.addOrUpdateServer(updatedServer)
+            updatedUser = serverDao.addOrUpdateUser(updatedUser)
+            userPreferencesDataStore.updateData {
+                it
+                    .toBuilder()
+                    .apply {
+                        currentServerId = updatedServer.id.toServerString()
+                        currentUserId = updatedUser.id.toServerString()
+                    }.build()
+            }
+            withContext(Dispatchers.Main) {
+                Timber.d("BREADCRUMB: SESSION - Session update complete. Setting LiveData current user.")
+                _current.value = CurrentUser(updatedServer, updatedUser)
+                _currentUserDto.value = userDto
+            }
+            sharedPreferences.edit(true) {
+                putString(SERVER_URL_KEY, updatedServer.url)
+                putString(ACCESS_TOKEN_KEY, updatedUser.accessToken)
+            }
+            return@withContext _current.value
         }
 
-        /**
-         * Saves the server & User to the app database and updates the [ApiClient] to use this server & user
-         */
-        suspend fun changeUser(
-            server: JellyfinServer,
-            user: JellyfinUser,
-        ): CurrentUser? =
-            withContext(Dispatchers.IO) {
-                if (server.id != user.serverId) {
-                    throw IllegalStateException("User is not part of the server")
-                }
-                Timber.v("Changing user to ${user.name} on ${server.url}")
-                apiClient.update(baseUrl = server.url, accessToken = user.accessToken)
-                val userDto by apiClient.userApi.getCurrentUser()
-                val updatedServer =
-                    try {
-                        val sysInfo by apiClient.systemApi.getPublicSystemInfo()
-                        server.copy(name = sysInfo.serverName, version = sysInfo.version)
-                    } catch (ex: Exception) {
-                        Timber.w(ex, "Exception fetching public system info")
-                        server
-                    }
-                var updatedUser =
-                    user.copy(
-                        id = userDto.id,
-                        name = userDto.name,
-                    )
-                serverDao.addOrUpdateServer(updatedServer)
-                updatedUser = serverDao.addOrUpdateUser(updatedUser)
-                userPreferencesDataStore.updateData {
-                    it
-                        .toBuilder()
-                        .apply {
-                            currentServerId = updatedServer.id.toServerString()
-                            currentUserId = updatedUser.id.toServerString()
-                        }.build()
-                }
-                withContext(Dispatchers.Main) {
-                    _current.value = CurrentUser(updatedServer, updatedUser)
-                    _currentUserDto.value = userDto
-                }
-                sharedPreferences.edit(true) {
-                    putString(SERVER_URL_KEY, updatedServer.url)
-                    putString(ACCESS_TOKEN_KEY, updatedUser.accessToken)
-                }
-                return@withContext _current.value
-            }
-
-        /**
-         * Restores a session for the given server & user such as when the app reopens
-         *
-         * If user has a PIN, this returns false
-         */
-        suspend fun restoreSession(
-            serverId: UUID?,
-            userId: UUID?,
-        ): CurrentUser? {
-            if (serverId == null || userId == null) {
-                _current.setValueOnMain(null)
-                return null
-            }
-            val serverAndUsers =
-                withContext(Dispatchers.IO) {
-                    serverDao.getServer(serverId)
-                }
-            if (serverAndUsers != null) {
-                val current = _current.value
-                if (current != null && current.server.id == serverId && current.user.id == userId) {
-                    Timber.v("Restoring session for current user, so shortcut")
-                    apiClient.update(
-                        baseUrl = current.server.url,
-                        accessToken = current.user.accessToken,
-                    )
-                    return current
-                } else {
-                    val user = serverAndUsers.users.firstOrNull { it.id == userId }
-                    if (user != null) {
-                        return changeUser(serverAndUsers.server, user)
-                    }
-                }
-            }
+    /**
+     * Restores a session for the given server & user such as when the app reopens
+     *
+     * If user has a PIN, this returns false
+     */
+    suspend fun restoreSession(
+        serverId: UUID?,
+        userId: UUID?,
+    ): CurrentUser? {
+        Timber.d("BREADCRUMB: SESSION - restoreSession called for server: $serverId, user: $userId")
+        if (serverId == null || userId == null) {
+            Timber.e(Exception("SESSION_DEBUG: IDs missing inside restoreSession"), "IDs missing, clearing session")
+            _current.setValueOnMain(null)
             return null
         }
-
-        suspend fun fetchLastUsedServer(serverId: UUID?): JellyfinServer? =
+        val serverAndUsers =
             withContext(Dispatchers.IO) {
-                serverId?.let { serverDao.getServer(serverId)?.server }
+                serverDao.getServer(serverId)
             }
+        if (serverAndUsers != null) {
+            val current = _current.value
+            if (current != null && current.server.id == serverId && current.user.id == userId) {
+                Timber.d("BREADCRUMB: SESSION - session restore shortcut used")
+                apiClient.update(
+                    baseUrl = current.server.url,
+                    accessToken = current.user.accessToken,
+                )
+                return current
+            } else {
+                val user = serverAndUsers.users.firstOrNull { it.id == userId }
+                if (user != null) {
+                    return changeUser(serverAndUsers.server, user)
+                }
+            }
+        }
+        Timber.d("BREADCRUMB: SESSION - restoreSession failed to find database match")
+        return null
+    }
 
-        fun closeSession() {
-            _current.value = null
+    suspend fun fetchLastUsedServer(serverId: UUID?): JellyfinServer? =
+        withContext(Dispatchers.IO) {
+            serverId?.let { serverDao.getServer(serverId)?.server }
         }
 
-        /**
-         * Given a successful [AuthenticationResult], switch to the user that just authenticated
-         */
-        suspend fun changeUser(
-            serverUrl: String,
-            authenticationResult: AuthenticationResult,
-        ) = withContext(Dispatchers.IO) {
-            val accessToken = authenticationResult.accessToken
-            if (accessToken != null) {
-                val authedUser = authenticationResult.user
-                val server =
-                    authenticationResult.serverId?.toUUIDOrNull()?.let {
-                        JellyfinServer(
-                            id = it,
-                            name = authedUser?.serverName,
-                            url = serverUrl,
-                            null,
+    fun closeSession() {
+        // THE TRAP: Logs the exact code path that is closing the session
+        Timber.e(Exception("SESSION_DEBUG: closeSession called from:"), "CRITICAL: Session is being closed!")
+        _current.value = null
+    }
+
+    /**
+     * Given a successful [AuthenticationResult], switch to the user that just authenticated
+     */
+    suspend fun changeUser(
+        serverUrl: String,
+        authenticationResult: AuthenticationResult,
+    ) = withContext(Dispatchers.IO) {
+        Timber.d("BREADCRUMB: SESSION - changeUser (AuthResult) triggered")
+        val accessToken = authenticationResult.accessToken
+        if (accessToken != null) {
+            val authedUser = authenticationResult.user
+            val server =
+                authenticationResult.serverId?.toUUIDOrNull()?.let {
+                    JellyfinServer(
+                        id = it,
+                        name = authedUser?.serverName,
+                        url = serverUrl,
+                        null,
+                    )
+                }
+            if (server != null) {
+                val user =
+                    authedUser?.let {
+                        JellyfinUser(
+                            id = it.id,
+                            name = it.name,
+                            serverId = server.id,
+                            accessToken = accessToken,
                         )
                     }
-                if (server != null) {
-                    val user =
-                        authedUser?.let {
-                            JellyfinUser(
-                                id = it.id,
-                                name = it.name,
-                                serverId = server.id,
-                                accessToken = accessToken,
-                            )
-                        }
-                    if (user != null) {
-                        return@withContext changeUser(server, user)
-                    } else {
-                        throw IllegalArgumentException("Authentication result's user was null")
-                    }
+                if (user != null) {
+                    return@withContext changeUser(server, user)
                 } else {
-                    throw IllegalArgumentException("Authentication result's serverId not valid: ${authenticationResult.serverId}")
+                    throw IllegalArgumentException("Authentication result's user was null")
                 }
             } else {
-                throw IllegalArgumentException("Authentication result's access token was null")
+                throw IllegalArgumentException("Authentication result's serverId not valid: ${authenticationResult.serverId}")
             }
+        } else {
+            throw IllegalArgumentException("Authentication result's access token was null")
         }
+    }
 
-        suspend fun removeUser(user: JellyfinUser) {
-            if (currentUser.value?.id == user.id) {
-                withContext(Dispatchers.Main) {
-                    _current.value = null
-                }
-                userPreferencesDataStore.updateData {
-                    it
-                        .toBuilder()
-                        .apply {
-                            currentUserId = ""
-                        }.build()
-                }
-                apiClient.update(accessToken = null)
+    suspend fun removeUser(user: JellyfinUser) {
+        Timber.d("BREADCRUMB: SESSION - removeUser called")
+        if (currentUser.value?.id == user.id) {
+            withContext(Dispatchers.Main) {
+                _current.value = null
             }
-            withContext(Dispatchers.IO) {
-                serverDao.deleteUser(user.serverId, user.id)
+            userPreferencesDataStore.updateData {
+                it
+                    .toBuilder()
+                    .apply {
+                        currentUserId = ""
+                    }.build()
             }
+            apiClient.update(accessToken = null)
         }
-
-        suspend fun removeServer(server: JellyfinServer) {
-            if (currentServer.value?.id == server.id) {
-                withContext(Dispatchers.Main) {
-                    _current.value = null
-                }
-                userPreferencesDataStore.updateData {
-                    it
-                        .toBuilder()
-                        .apply {
-                            currentServerId = ""
-                            currentUserId = ""
-                        }.build()
-                }
-                apiClient.update(baseUrl = null, accessToken = null)
-            }
-            withContext(Dispatchers.IO) {
-                serverDao.deleteServer(server.id)
-            }
+        withContext(Dispatchers.IO) {
+            serverDao.deleteUser(user.serverId, user.id)
         }
+    }
 
-        suspend fun switchServerOrUser() {
+    suspend fun removeServer(server: JellyfinServer) {
+        Timber.d("BREADCRUMB: SESSION - removeServer called")
+        if (currentServer.value?.id == server.id) {
+            withContext(Dispatchers.Main) {
+                _current.value = null
+            }
             userPreferencesDataStore.updateData {
                 it
                     .toBuilder()
@@ -249,45 +250,63 @@ class ServerRepository
                         currentUserId = ""
                     }.build()
             }
+            apiClient.update(baseUrl = null, accessToken = null)
         }
-
-        suspend fun setUserPin(
-            user: JellyfinUser,
-            pin: String?,
-        ) = withContext(Dispatchers.IO) {
-            val newUser = user.copy(pin = pin)
-            val updatedUser = serverDao.addOrUpdateUser(newUser)
-            if (currentUser.value?.id == updatedUser.id && currentServer.value?.id == user.serverId) {
-                // Updating current user, so push out the change
-                current.value?.let {
-                    val newCurrent = it.copy(user = updatedUser)
-                    _current.setValueOnMain(newCurrent)
-                }
-            }
-        }
-
-        suspend fun authorizeQuickConnect(code: String): Boolean =
-            withContext(Dispatchers.IO) {
-                val userId = currentUser.value?.id
-                if (userId == null) {
-                    Timber.e("No user logged in for Quick Connect authorization")
-                    throw IllegalStateException("Must be logged in to authorize Quick Connect")
-                }
-                val response = apiClient.quickConnectApi.authorizeQuickConnect(code, userId)
-                response.content
-            }
-
-        companion object {
-            fun getServerSharedPreferences(context: Context): SharedPreferences =
-                context.getSharedPreferences(
-                    "${context.packageName}_server",
-                    Context.MODE_PRIVATE,
-                )
-
-            const val SERVER_URL_KEY = "current.server"
-            const val ACCESS_TOKEN_KEY = "current.accessToken"
+        withContext(Dispatchers.IO) {
+            serverDao.deleteServer(server.id)
         }
     }
+
+    suspend fun switchServerOrUser() {
+        // THE TRAP: Logs the exact code path that is clearing your IDs
+        Timber.e(Exception("SESSION_DEBUG: switchServerOrUser called from:"), "CRITICAL: IDs are being cleared!")
+        userPreferencesDataStore.updateData {
+            it
+                .toBuilder()
+                .apply {
+                    currentServerId = ""
+                    currentUserId = ""
+                }.build()
+        }
+    }
+
+    suspend fun setUserPin(
+        user: JellyfinUser,
+        pin: String?,
+    ) = withContext(Dispatchers.IO) {
+        val newUser = user.copy(pin = pin)
+        val updatedUser = serverDao.addOrUpdateUser(newUser)
+        if (currentUser.value?.id == updatedUser.id && currentServer.value?.id == user.serverId) {
+            // Updating current user, so push out the change
+            current.value?.let {
+                val newCurrent = it.copy(user = updatedUser)
+                _current.setValueOnMain(newCurrent)
+            }
+        }
+    }
+
+    suspend fun authorizeQuickConnect(code: String): Boolean =
+        withContext(Dispatchers.IO) {
+            val userId = currentUser.value?.id
+            if (userId == null) {
+                Timber.e("No user logged in for Quick Connect authorization")
+                throw IllegalStateException("Must be logged in to authorize Quick Connect")
+            }
+            val response = apiClient.quickConnectApi.authorizeQuickConnect(code, userId)
+            response.content
+        }
+
+    companion object {
+        fun getServerSharedPreferences(context: Context): SharedPreferences =
+            context.getSharedPreferences(
+                "${context.packageName}_server",
+                Context.MODE_PRIVATE,
+            )
+
+        const val SERVER_URL_KEY = "current.server"
+        const val ACCESS_TOKEN_KEY = "current.accessToken"
+    }
+}
 
 @Serializable
 data class CurrentUser(

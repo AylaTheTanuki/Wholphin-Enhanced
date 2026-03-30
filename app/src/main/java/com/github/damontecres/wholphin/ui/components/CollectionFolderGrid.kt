@@ -61,7 +61,6 @@ import com.github.damontecres.wholphin.services.FavoriteWatchManager
 import com.github.damontecres.wholphin.services.MediaReportService
 import com.github.damontecres.wholphin.services.NavigationManager
 import com.github.damontecres.wholphin.ui.AspectRatios
-import com.github.damontecres.wholphin.ui.RequestOrRestoreFocus
 import com.github.damontecres.wholphin.ui.SlimItemFields
 import com.github.damontecres.wholphin.ui.cards.GridCard
 import com.github.damontecres.wholphin.ui.data.AddPlaylistViewModel
@@ -93,6 +92,7 @@ import dagger.assisted.AssistedInject
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.jellyfin.sdk.api.client.ApiClient
@@ -108,6 +108,8 @@ import org.jellyfin.sdk.model.serializer.toUUIDOrNull
 import timber.log.Timber
 import java.util.UUID
 import kotlin.time.Duration
+
+private const val GRID_BACKDROP_FOCUS_SETTLE_DELAY_MS = 150L
 
 @HiltViewModel(assistedFactory = CollectionFolderViewModel.Factory::class)
 class CollectionFolderViewModel
@@ -443,6 +445,12 @@ constructor(
             backdropService.submit(item)
         }
     }
+
+    fun hideBackdropImage() {
+        viewModelScope.launchIO {
+            backdropService.hideBackdropImageKeepColors()
+        }
+    }
 }
 
 /**
@@ -557,7 +565,10 @@ fun CollectionFolderGrid(
                     sortAndDirection = sortAndDirection!!,
                     modifier = Modifier.fillMaxSize(),
                     focusRequesterOnEmpty = focusRequesterOnEmpty,
-                    onClickItem = onClickItem,
+                    onClickItem = { position, baseItem ->
+                        viewModel.position = position
+                        onClickItem(position, baseItem)
+                    },
                     onLongClickItem = { position, baseItem ->
                         // THE FIX: Bypassing the dialog entirely and favoriting the item instantly
                         val newFavoriteStatus = !baseItem.favorite
@@ -585,8 +596,10 @@ fun CollectionFolderGrid(
                     defaultViewOptions = defaultViewOptions,
                     onSaveViewOptions = { viewModel.saveViewOptions(it) },
                     onChangeBackdrop = viewModel::updateBackdrop,
+                    onHideBackdropImage = viewModel::hideBackdropImage,
                     playEnabled = playEnabled,
                     onClickPlay = { index, item ->
+                        viewModel.position = index
                         val destination =
                             if (item.type == BaseItemKind.PHOTO_ALBUM) {
                                 Destination.Slideshow(
@@ -720,6 +733,7 @@ fun CollectionFolderGridContent(
     onClickPlayAll: (shuffle: Boolean) -> Unit,
     onClickPlay: (Int, BaseItem) -> Unit,
     onChangeBackdrop: (BaseItem) -> Unit,
+    onHideBackdropImage: () -> Unit,
     initialPosition: Int,
     modifier: Modifier = Modifier,
     showTitle: Boolean = true,
@@ -738,20 +752,23 @@ fun CollectionFolderGridContent(
     val headerRowFocusRequester = remember { FocusRequester() }
 
     val gridFocusRequester = remember { FocusRequester() }
-    if (pager?.isNotEmpty() == true) {
-        RequestOrRestoreFocus(gridFocusRequester)
-    } else {
+    if (pager?.isEmpty() != false) {
         LaunchedEffect(Unit) {
             (focusRequesterOnEmpty ?: headerRowFocusRequester).tryRequestFocus()
         }
     }
-    var backdropImageUrl by remember { mutableStateOf<String?>(null) }
-
     var position by rememberInt(initialPosition)
+    var lastBackdropItemId by rememberSaveable { mutableStateOf<UUID?>(null) }
     val focusedItem = pager?.getOrNull(position)
     if (viewOptions.showDetails) {
-        LaunchedEffect(focusedItem) {
-            focusedItem?.let(onChangeBackdrop)
+        LaunchedEffect(focusedItem?.id) {
+            val item = focusedItem ?: return@LaunchedEffect
+            val backdropAlreadyShowing = lastBackdropItemId == item.id
+            if (backdropAlreadyShowing) return@LaunchedEffect
+            onHideBackdropImage()
+            delay(GRID_BACKDROP_FOCUS_SETTLE_DELAY_MS)
+            onChangeBackdrop(item)
+            lastBackdropItemId = item.id
         }
     }
 

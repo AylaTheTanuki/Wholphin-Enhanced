@@ -27,3 +27,21 @@ data class NavDrawerPinnedItem(
     val type: NavPinType,
     @ColumnInfo(defaultValue = "-1") val order: Int,
 )
+
+@Entity(
+    foreignKeys = [
+        ForeignKey(
+            entity = JellyfinUser::class,
+            parentColumns = arrayOf("rowId"),
+            childColumns = arrayOf("userId"),
+            onDelete = ForeignKey.CASCADE,
+            onUpdate = ForeignKey.CASCADE,
+        ),
+    ],
+    primaryKeys = ["userId", "rowId"],
+)
+data class MovieSectionRowPreference(
+    val userId: Int,
+    val rowId: String,
+    @ColumnInfo(defaultValue = "-1") val order: Int,
+)

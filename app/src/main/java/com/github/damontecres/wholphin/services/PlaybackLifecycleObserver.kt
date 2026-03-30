@@ -38,13 +38,15 @@ class PlaybackLifecycleObserver
             }
         }
 
-        override fun onPause(owner: LifecycleOwner) {
-            playerFactory.currentPlayer?.let {
+    override fun onPause(owner: LifecycleOwner) {
+        playerFactory.currentPlayer?.let {
+            if (!it.isReleased) {
                 wasPlaying = it.isPlaying
                 it.pause()
             }
-            themeSongPlayer.stop()
         }
+        themeSongPlayer.stop()
+    }
 
         override fun onStop(owner: LifecycleOwner) {
             themeSongPlayer.stop()

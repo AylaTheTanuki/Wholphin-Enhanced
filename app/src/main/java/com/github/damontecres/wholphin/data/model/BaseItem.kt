@@ -161,8 +161,8 @@ data class BaseItem(
         data.premiereDate
             ?.let {
                 it.year.toString() +
-                    it.monthValue.toString().padStart(2, '0') +
-                    it.dayOfMonth.toString().padStart(2, '0')
+                        it.monthValue.toString().padStart(2, '0') +
+                        it.dayOfMonth.toString().padStart(2, '0')
             }?.toIntOrNull()
 
     fun destination(index: Int? = null): Destination {
@@ -170,13 +170,29 @@ data class BaseItem(
             // Redirect episodes & seasons to their series if possible
             when (type) {
                 BaseItemKind.EPISODE -> {
-                    data.seasonId?.let { seasonId ->
+                    val seriesId = data.seriesId
+                    val seasonNumber = data.parentIndexNumber
+                    if (seriesId != null && seasonNumber != null && seasonNumber > 0) {
+                        // Use seasonNumber as the primary routing key.
+                        // This bypasses the broken seasonId lookup caused by interleaved
+                        // specials metadata (e.g. AirsBeforeEpisode tags on Voyager specials),
+                        // which can corrupt the seasonId in Next Up payloads, causing the app
+                        // to land on Season 0 (Specials) instead of the correct season.
                         Destination.SeriesOverview(
-                            data.seriesId!!,
+                            seriesId,
                             BaseItemKind.SERIES,
-                            SeasonEpisodeIds(seasonId, data.parentIndexNumber, id, indexNumber),
+                            SeasonEpisodeIds(data.seasonId!!, seasonNumber, id, indexNumber),
                         )
-                    } ?: Destination.MediaItem(this)
+                    } else if (seriesId != null && data.seasonId != null) {
+                        // Fallback for specials (seasonNumber == 0) or missing seasonNumber
+                        Destination.SeriesOverview(
+                            seriesId,
+                            BaseItemKind.SERIES,
+                            SeasonEpisodeIds(data.seasonId!!, data.parentIndexNumber, id, indexNumber),
+                        )
+                    } else {
+                        Destination.MediaItem(this)
+                    }
                 }
 
                 BaseItemKind.SEASON -> {

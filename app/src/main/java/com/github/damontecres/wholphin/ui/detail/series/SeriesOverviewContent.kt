@@ -204,7 +204,6 @@ fun SeriesOverviewContent(
                             modifier =
                                 Modifier
                                     .focusRestorer(firstItemFocusRequester)
-//                                    .focusRequester(episodeRowFocusRequester)
                                     .onFocusChanged {
                                         cardRowHasFocus = it.hasFocus
                                     },

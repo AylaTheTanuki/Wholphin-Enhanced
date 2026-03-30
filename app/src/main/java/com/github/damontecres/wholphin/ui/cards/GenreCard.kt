@@ -25,12 +25,9 @@ import androidx.tv.material3.CardDefaults
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
-import coil3.request.ImageRequest
-import coil3.request.crossfade
 import com.github.damontecres.wholphin.ui.AspectRatios
 import com.github.damontecres.wholphin.ui.PreviewTvSpec
 import com.github.damontecres.wholphin.ui.components.Genre
-import com.github.damontecres.wholphin.ui.isNotNullOrBlank
 import com.github.damontecres.wholphin.ui.setup.rememberIdColor
 import com.github.damontecres.wholphin.ui.theme.WholphinTheme
 import java.util.UUID
@@ -63,6 +60,17 @@ fun GenreCard(
     interactionSource: MutableInteractionSource = remember { MutableInteractionSource() },
 ) {
     val background = rememberIdColor(genreId).copy(alpha = .6f)
+    val context = LocalContext.current
+    val imageRequest =
+        remember(context, imageUrl) {
+            imageUrl?.let {
+                buildCardImageRequest(
+                    context = context,
+                    imageUrl = it,
+                    crossfade = true,
+                )
+            }
+        }
     Card(
         modifier = modifier,
         onClick = onClick,
@@ -81,14 +89,9 @@ fun GenreCard(
                     .fillMaxSize()
                     .clip(RoundedCornerShape(8.dp)),
         ) {
-            if (imageUrl != null) {
+            if (imageRequest != null) {
                 AsyncImage(
-                    model =
-                        ImageRequest
-                            .Builder(LocalContext.current)
-                            .data(imageUrl)
-                            .crossfade(true)
-                            .build(),
+                    model = imageRequest,
                     contentScale = ContentScale.FillBounds,
                     contentDescription = null,
                     modifier =

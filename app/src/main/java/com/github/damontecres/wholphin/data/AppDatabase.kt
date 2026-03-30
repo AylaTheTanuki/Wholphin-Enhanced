@@ -13,9 +13,11 @@ import com.github.damontecres.wholphin.data.model.ItemTrackModification
 import com.github.damontecres.wholphin.data.model.JellyfinServer
 import com.github.damontecres.wholphin.data.model.JellyfinUser
 import com.github.damontecres.wholphin.data.model.LibraryDisplayInfo
+import com.github.damontecres.wholphin.data.model.MovieSectionRowPreference
 import com.github.damontecres.wholphin.data.model.NavDrawerPinnedItem
 import com.github.damontecres.wholphin.data.model.PlaybackEffect
 import com.github.damontecres.wholphin.data.model.PlaybackLanguageChoice
+import com.github.damontecres.wholphin.data.model.SearchHistoryEntry
 import com.github.damontecres.wholphin.data.model.SeerrServer
 import com.github.damontecres.wholphin.data.model.SeerrUser
 import com.github.damontecres.wholphin.ui.components.ViewOptions
@@ -32,15 +34,17 @@ import java.util.UUID
         JellyfinUser::class,
         ItemPlayback::class,
         NavDrawerPinnedItem::class,
+        MovieSectionRowPreference::class,
         LibraryDisplayInfo::class,
         PlaybackEffect::class,
         PlaybackLanguageChoice::class,
         ItemTrackModification::class,
+        SearchHistoryEntry::class,
         SeerrServer::class,
         SeerrUser::class,
 
     ],
-    version = 31,
+    version = 33,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(3, 4),
@@ -55,6 +59,8 @@ import java.util.UUID
         AutoMigration(12, 20),
         AutoMigration(20, 30),
         AutoMigration(30, 31),
+        AutoMigration(31, 32),
+        AutoMigration(32, 33),
     ],
 )
 @TypeConverters(Converters::class)
@@ -72,6 +78,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun seerrServerDao(): SeerrServerDao
 
     abstract fun playbackEffectDao(): PlaybackEffectDao
+
+    abstract fun searchHistoryDao(): SearchHistoryDao
 }
 
 class Converters {

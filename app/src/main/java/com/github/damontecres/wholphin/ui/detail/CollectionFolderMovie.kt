@@ -97,7 +97,7 @@ fun CollectionFolderMovie(
                     preferences = preferences,
                     parentId = destination.itemId,
                     onFocusPosition = { pos ->
-                        showHeader = pos.row < 1
+                        showHeader = pos.row < 3
                     },
                     modifier =
                         Modifier

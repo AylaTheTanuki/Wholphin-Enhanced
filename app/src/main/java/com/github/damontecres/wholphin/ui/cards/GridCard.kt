@@ -1,8 +1,8 @@
 package com.github.damontecres.wholphin.ui.cards
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
@@ -14,14 +14,15 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -37,7 +38,11 @@ import com.github.damontecres.wholphin.ui.AspectRatios
 import com.github.damontecres.wholphin.ui.components.ViewOptionImageType
 import com.github.damontecres.wholphin.ui.enableMarquee
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import androidx.compose.ui.input.key.onKeyEvent
 import org.jellyfin.sdk.model.api.BaseItemKind // Added import for BaseItemKind
+
+val LocalGridCardFocusAnimationsEnabled = compositionLocalOf { true }
 
 @Composable
 fun GridCard(
@@ -53,6 +58,19 @@ fun GridCard(
 ) {
     val dto = item?.data
     val focused by interactionSource.collectIsFocusedAsState()
+    val focusAnimationsEnabled = LocalGridCardFocusAnimationsEnabled.current
+    val showFocusedState = focused && focusAnimationsEnabled
+    val clickScope = rememberCoroutineScope()
+    var clickAnimating by remember { mutableStateOf(false) }
+    val animatedScale by animateFloatAsState(
+        targetValue =
+            when {
+                clickAnimating -> 0.90f
+                else -> 1f
+            },
+        animationSpec = tween(durationMillis = 90),
+        label = "gridCardScale",
+    )
 
     // THE FINAL FIX: Smart Canvas Sizing
     // We check if this is our intercepted partially-watched episode
@@ -62,40 +80,48 @@ fun GridCard(
     // If it is, force the canvas to be wide (16:9). Otherwise, obey the default rules.
     val finalAspectRatio = if (isInterceptedEpisode) (16f / 9f) else imageAspectRatio
 
-    // PREMIUM TWEAK: Softer spacing and more dramatic elevation
-    val spaceBetween by animateDpAsState(if (focused) 14.dp else 4.dp)
-    val spaceBelow by animateDpAsState(if (focused) 6.dp else 12.dp)
-    val scale by animateFloatAsState(if (focused) 1.12f else 1.0f)
-    val elevation by animateDpAsState(if (focused) 20.dp else 0.dp)
-
     var focusedAfterDelay by remember { mutableStateOf(false) }
 
     val hideOverlayDelay = 500L
-    if (focused) {
-        LaunchedEffect(Unit) {
+    LaunchedEffect(showFocusedState) {
+        if (showFocusedState) {
             delay(hideOverlayDelay)
-            if (focused) focusedAfterDelay = true
+            if (showFocusedState) focusedAfterDelay = true
         }
-    } else {
-        focusedAfterDelay = false
+        if (!showFocusedState) {
+            focusedAfterDelay = false
+        }
     }
 
     Column(
-        verticalArrangement = Arrangement.spacedBy(spaceBetween),
-        modifier = modifier.scale(scale),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = modifier,
     ) {
         Card(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    // THE PREMIUM FIX: Shadow instead of Border
-                    .shadow(
-                        elevation = elevation,
-                        shape = RoundedCornerShape(10.dp),
-                        ambientColor = Color.Black.copy(alpha = 0.5f),
-                        spotColor = Color.White.copy(alpha = 0.2f) // Subtle "Frost" glow
-                    ),
-            onClick = onClick,
+                    .scale(animatedScale)
+                    .onKeyEvent { event ->
+                        if ((event.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_CENTER ||
+                                    event.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_ENTER) &&
+                            event.nativeKeyEvent.action == android.view.KeyEvent.ACTION_UP &&
+                            event.nativeKeyEvent.eventTime - event.nativeKeyEvent.downTime > 500
+                        ) {
+                            true
+                        } else {
+                            false
+                        }
+                    },
+            onClick = {
+                if (clickAnimating) return@Card
+                clickAnimating = true
+                clickScope.launch {
+                    delay(65)
+                    onClick()
+                    clickAnimating = false
+                }
+            },
             onLongClick = onLongClick,
             interactionSource = interactionSource,
             colors = CardDefaults.colors(containerColor = Color.Transparent),
@@ -125,7 +151,7 @@ fun GridCard(
         AnimatedVisibility(showTitle) {
             Column(
                 verticalArrangement = Arrangement.spacedBy(2.dp),
-                modifier = Modifier.padding(bottom = spaceBelow).fillMaxWidth(),
+                modifier = Modifier.padding(bottom = 8.dp).fillMaxWidth(),
             ) {
                 Text(
                     text = item?.title ?: "",

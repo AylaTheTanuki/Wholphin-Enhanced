@@ -16,6 +16,8 @@ import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.livedata.observeAsState
@@ -30,13 +32,15 @@ import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
-import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.github.damontecres.wholphin.R
@@ -79,6 +83,7 @@ import com.github.damontecres.wholphin.ui.discover.DiscoverRowData
 import com.github.damontecres.wholphin.ui.letNotEmpty
 import com.github.damontecres.wholphin.ui.nav.Destination
 import com.github.damontecres.wholphin.ui.rememberInt
+import com.github.damontecres.wholphin.ui.tryRequestFocusAfterLayout
 import com.github.damontecres.wholphin.util.DataLoadingState
 import com.github.damontecres.wholphin.util.ExceptionHandler
 import com.github.damontecres.wholphin.util.LoadingState
@@ -111,12 +116,40 @@ fun SeriesDetails(
     val people by viewModel.people.observeAsState(listOf())
     val similar by viewModel.similar.observeAsState(listOf())
     val discovered by viewModel.discovered.collectAsState()
+    val resumeRefreshToken by viewModel.resumeRefreshToken.observeAsState(0)
+    val unknownTitle = stringResource(R.string.unknown)
 
     var overviewDialog by remember { mutableStateOf<ItemDetailsDialogInfo?>(null) }
     var showWatchConfirmation by remember { mutableStateOf(false) }
     var seasonDialog by remember { mutableStateOf<DialogParams?>(null) }
     var showPlaylistDialog by remember { mutableStateOf<Optional<UUID>>(Optional.absent()) }
     val playlistState by playlistViewModel.playlistState.observeAsState(PlaylistLoadingState.Pending)
+
+    // FIX: DisposableEffect lives at the TOP of the composable, outside any loading
+    // state branch. This guarantees it is always registered and fires ON_RESUME
+    // every single time MainActivity surfaces after the player Activity finishes —
+    // regardless of whether the page is still loading or already showing content.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        var hasHandledInitialResume = false
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> {
+                    if (hasHandledInitialResume) {
+                        viewModel.onResumePage()
+                    } else {
+                        hasHandledInitialResume = true
+                    }
+                }
+                Lifecycle.Event.ON_PAUSE -> viewModel.release()
+                else -> {}
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
 
     when (val state = loading) {
         is LoadingState.Error -> {
@@ -125,20 +158,12 @@ fun SeriesDetails(
 
         LoadingState.Loading,
         LoadingState.Pending,
-        -> {
+            -> {
             LoadingPage(modifier)
         }
 
         LoadingState.Success -> {
             item?.let { item ->
-                LifecycleResumeEffect(destination.itemId) {
-                    viewModel.onResumePage()
-
-                    onPauseOrDispose {
-                        viewModel.release()
-                    }
-                }
-
                 val played = item.data.userData?.played ?: false
                 SeriesDetailsContent(
                     preferences = preferences,
@@ -148,10 +173,11 @@ fun SeriesDetails(
                     extras = extras,
                     people = people,
                     similar = similar,
+                    resumeRefreshToken = resumeRefreshToken,
                     played = played,
                     favorite = item.data.userData?.isFavorite ?: false,
                     modifier = modifier,
-                    onClickItem = { index, item ->
+                    onClickItem = { _, item ->
                         viewModel.navigateTo(item.destination())
                     },
                     onClickPerson = {
@@ -162,7 +188,7 @@ fun SeriesDetails(
                             ),
                         )
                     },
-                    onLongClickItem = { index, season ->
+                    onLongClickItem = { _, season ->
                         seasonDialog =
                             buildDialogForSeason(
                                 context = context,
@@ -184,7 +210,7 @@ fun SeriesDetails(
                     overviewOnClick = {
                         overviewDialog =
                             ItemDetailsDialogInfo(
-                                title = item.name ?: context.getString(R.string.unknown),
+                                title = item.name ?: unknownTitle,
                                 overview = item.data.overview,
                                 genres = item.data.genres.orEmpty(),
                                 files = listOf(),
@@ -214,7 +240,7 @@ fun SeriesDetails(
                         viewModel.navigateTo(extra.destination)
                     },
                     discovered = discovered,
-                    onClickDiscover = { index, item ->
+                    onClickDiscover = { _, item ->
                         viewModel.navigateTo(item.destination)
                     },
                     moreActions =
@@ -303,6 +329,7 @@ fun SeriesDetailsContent(
     extras: List<ExtrasItem>,
     people: List<Person>,
     discovered: List<DiscoverItem>,
+    resumeRefreshToken: Int,
     played: Boolean,
     favorite: Boolean,
     onClickItem: (Int, BaseItem) -> Unit,
@@ -326,6 +353,12 @@ fun SeriesDetailsContent(
     val focusRequesters = remember { List(DISCOVER_ROW + 1) { FocusRequester() } }
     val playFocusRequester = remember { FocusRequester() }
     RequestOrRestoreFocus(focusRequesters.getOrNull(position))
+    LaunchedEffect(resumeRefreshToken) {
+        if (resumeRefreshToken > 0) {
+            position = HEADER_ROW
+            playFocusRequester.tryRequestFocusAfterLayout("series_details:play_button", attempts = 6)
+        }
+    }
     var moreDialog by remember { mutableStateOf<DialogParams?>(null) }
 
     Box(
@@ -375,6 +408,7 @@ fun SeriesDetailsContent(
                                     .focusRequester(playFocusRequester)
                                     .onFocusChanged {
                                         if (it.isFocused) {
+                                            position = HEADER_ROW
                                             scope.launch(ExceptionHandler()) {
                                                 bringIntoViewRequester.bringIntoView()
                                             }
@@ -391,6 +425,7 @@ fun SeriesDetailsContent(
                             modifier =
                                 Modifier.onFocusChanged {
                                     if (it.isFocused) {
+                                        position = HEADER_ROW
                                         scope.launch(ExceptionHandler()) {
                                             bringIntoViewRequester.bringIntoView()
                                         }
@@ -404,6 +439,7 @@ fun SeriesDetailsContent(
                             modifier =
                                 Modifier.onFocusChanged {
                                     if (it.isFocused) {
+                                        position = HEADER_ROW
                                         scope.launch(ExceptionHandler()) {
                                             bringIntoViewRequester.bringIntoView()
                                         }
@@ -418,6 +454,7 @@ fun SeriesDetailsContent(
                             modifier =
                                 Modifier.onFocusChanged {
                                     if (it.isFocused) {
+                                        position = HEADER_ROW
                                         scope.launch(ExceptionHandler()) {
                                             bringIntoViewRequester.bringIntoView()
                                         }
@@ -430,6 +467,7 @@ fun SeriesDetailsContent(
                             modifier =
                                 Modifier.onFocusChanged {
                                     if (it.isFocused) {
+                                        position = HEADER_ROW
                                         scope.launch(ExceptionHandler()) {
                                             bringIntoViewRequester.bringIntoView()
                                         }
@@ -454,7 +492,7 @@ fun SeriesDetailsContent(
                             Modifier
                                 .fillMaxWidth()
                                 .focusRequester(focusRequesters[SEASONS_ROW]),
-                        cardContent = @Composable { index, item, mod, onClick, onLongClick ->
+                        cardContent = @Composable { _, item, mod, onClick, onLongClick ->
                             SeasonCard(
                                 item = item,
                                 onClick = onClick,
@@ -475,7 +513,7 @@ fun SeriesDetailsContent(
                                 position = PEOPLE_ROW
                                 onClickPerson.invoke(it)
                             },
-                            onLongClick = { index, person ->
+                            onLongClick = { _, person ->
                                 position = PEOPLE_ROW
                                 val items =
                                     buildMoreDialogItemsForPerson(
@@ -522,7 +560,7 @@ fun SeriesDetailsContent(
                                 position = SIMILAR_ROW
                                 onClickItem.invoke(index, item)
                             },
-                            onLongClickItem = { index, item ->
+                            onLongClickItem = { _, item ->
                                 position = SIMILAR_ROW
                                 val items =
                                     buildMoreDialogItemsForHome(
@@ -541,7 +579,7 @@ fun SeriesDetailsContent(
                                         items = items,
                                     )
                             },
-                            cardContent = { index, item, mod, onClick, onLongClick ->
+                            cardContent = { _, item, mod, onClick, onLongClick ->
                                 SeasonCard(
                                     item = item,
                                     onClick = onClick,
@@ -598,14 +636,14 @@ fun SeriesDetailsHeader(
     overviewOnClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val scope = rememberCoroutineScope()
     val dto = series.data
+    val unknownTitle = stringResource(R.string.unknown)
     Column(
         verticalArrangement = Arrangement.spacedBy(4.dp),
         modifier = modifier,
     ) {
         Text(
-            text = series.name ?: stringResource(R.string.unknown),
+            text = series.name ?: unknownTitle,
             color = MaterialTheme.colorScheme.onBackground,
             style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.SemiBold),
             maxLines = 1,

@@ -1,6 +1,7 @@
 package com.github.damontecres.wholphin.ui.cards
 
-import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -19,10 +20,12 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
@@ -43,6 +46,7 @@ import com.github.damontecres.wholphin.ui.PreviewTvSpec
 import com.github.damontecres.wholphin.ui.enableMarquee
 import com.github.damontecres.wholphin.ui.theme.WholphinTheme
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import org.jellyfin.sdk.model.UUID
 import org.jellyfin.sdk.model.api.PersonKind
 
@@ -81,6 +85,17 @@ fun PersonCard(
     val hideOverlayDelay = 1_000L
 
     val focused = interactionSource.collectIsFocusedAsState().value
+    val clickScope = rememberCoroutineScope()
+    var clickAnimating by remember { mutableStateOf(false) }
+    val animatedScale by animateFloatAsState(
+        targetValue =
+            when {
+                clickAnimating -> 0.90f
+                else -> 1f
+            },
+        animationSpec = tween(durationMillis = 90),
+        label = "personCardScale",
+    )
     var focusedAfterDelay by remember { mutableStateOf(false) }
 
     if (focused) {
@@ -95,15 +110,21 @@ fun PersonCard(
     } else {
         focusedAfterDelay = false
     }
-    val spaceBetween by animateDpAsState(if (focused) 12.dp else 4.dp)
-    val spaceBelow by animateDpAsState(if (focused) 4.dp else 12.dp)
     Column(
-        verticalArrangement = Arrangement.spacedBy(spaceBetween),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
         modifier = modifier,
     ) {
         Card(
-            modifier = Modifier,
-            onClick = onClick,
+            modifier = Modifier.scale(animatedScale),
+            onClick = {
+                if (clickAnimating) return@Card
+                clickAnimating = true
+                clickScope.launch {
+                    delay(65)
+                    onClick()
+                    clickAnimating = false
+                }
+            },
             onLongClick = onLongClick,
             interactionSource = interactionSource,
             shape = CardDefaults.shape(CircleShape),
@@ -123,6 +144,7 @@ fun PersonCard(
                 CardDefaults.colors(
                     containerColor = Color.Transparent,
                 ),
+            scale = CardDefaults.scale(focusedScale = 1f),
         ) {
             ItemCardImage(
                 imageUrl = imageUrl,
@@ -168,7 +190,7 @@ fun PersonCard(
             verticalArrangement = Arrangement.spacedBy(0.dp),
             modifier =
                 Modifier
-                    .padding(bottom = spaceBelow)
+                    .padding(bottom = 8.dp)
                     .fillMaxWidth(),
         ) {
             Text(

@@ -187,10 +187,7 @@ fun SeekBarDisplay(
                             }
                         }
                         false
-                    }.handleDPadKeyEvents(
-                        onLeft = onLeft,
-                        onRight = onRight,
-                    ).focusable(enabled = enabled, interactionSource = interactionSource),
+                    }.focusable(enabled = enabled, interactionSource = interactionSource),
             onDraw = {
                 val yOffset = size.height.div(2)
                 drawLine(

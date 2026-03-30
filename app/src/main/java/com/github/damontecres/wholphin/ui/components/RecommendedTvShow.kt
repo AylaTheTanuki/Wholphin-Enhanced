@@ -18,6 +18,7 @@ import com.github.damontecres.wholphin.services.MediaReportService
 import com.github.damontecres.wholphin.services.NavigationManager
 import com.github.damontecres.wholphin.services.SuggestionService
 import com.github.damontecres.wholphin.services.SuggestionsResource
+import com.github.damontecres.wholphin.services.WatchedEventBus
 import com.github.damontecres.wholphin.ui.SlimItemFields
 import com.github.damontecres.wholphin.ui.data.RowColumn
 import com.github.damontecres.wholphin.ui.setValueOnMain
@@ -72,12 +73,14 @@ constructor(
     favoriteWatchManager: FavoriteWatchManager,
     mediaReportService: MediaReportService,
     backdropService: BackdropService,
+    watchedEventBus: WatchedEventBus,
 ) : RecommendedViewModel(
     context,
     navigationManager,
     favoriteWatchManager,
     mediaReportService,
     backdropService,
+    watchedEventBus,
     api,
     serverRepository,
 ) {
@@ -109,34 +112,179 @@ constructor(
         MutableStateFlow<List<HomeRowLoadingState>>(
             listOf(
                 HomeRowLoadingState.Pending(context.getString(R.string.continue_watching)), // 0
-                HomeRowLoadingState.Pending(context.getString(R.string.next_up)), // 1
-                HomeRowLoadingState.Pending("Favorite Shows"), // 2
-                HomeRowLoadingState.Pending("Favorite Episodes"), // 3
-                HomeRowLoadingState.Pending(context.getString(R.string.suggestions)), // 4
-                HomeRowLoadingState.Pending(context.getString(R.string.top_unwatched)), // 5
-
-                HomeRowLoadingState.Pending("Sci-Fi Shows"), // 6
-                HomeRowLoadingState.Pending("Action Shows"), // 7
-                HomeRowLoadingState.Pending("Adventure Shows"), // 8
-                HomeRowLoadingState.Pending("Animation Shows"), // 9
-                HomeRowLoadingState.Pending("Comedy Shows"), // 10
-                HomeRowLoadingState.Pending("Crime Shows"), // 11
-                HomeRowLoadingState.Pending("Documentary Shows"), // 12
-                HomeRowLoadingState.Pending("Drama Shows"), // 13
-                HomeRowLoadingState.Pending("Family Shows"), // 14
-                HomeRowLoadingState.Pending("Fantasy Shows"), // 15
-                HomeRowLoadingState.Pending("History Shows"), // 16
-                HomeRowLoadingState.Pending("Horror Shows"), // 17
-                HomeRowLoadingState.Pending("Mystery Shows"), // 18
-                HomeRowLoadingState.Pending("Romance Shows"), // 19
-                HomeRowLoadingState.Pending("Thriller Shows"), // 20
-                HomeRowLoadingState.Pending("War Shows"), // 21
-                HomeRowLoadingState.Pending("Western Shows"), // 22
-
+                HomeRowLoadingState.Pending(context.getString(R.string.next_up)),           // 1
+                HomeRowLoadingState.Pending("Favorite Shows"),                              // 2
+                HomeRowLoadingState.Pending("Favorite Episodes"),                           // 3
+                HomeRowLoadingState.Pending(context.getString(R.string.suggestions)),       // 4
+                HomeRowLoadingState.Pending(context.getString(R.string.top_unwatched)),     // 5
+                HomeRowLoadingState.Pending("Sci-Fi Shows"),                                // 6
+                HomeRowLoadingState.Pending("Horror Shows"),                                // 7
+                HomeRowLoadingState.Pending("Thriller Shows"),                              // 8
+                HomeRowLoadingState.Pending("Animation Shows"),                             // 9
+                HomeRowLoadingState.Pending("Mystery Shows"),                               // 10
+                HomeRowLoadingState.Pending("Romance Shows"),                               // 11
+                HomeRowLoadingState.Pending("Action Shows"),                                // 12
+                HomeRowLoadingState.Pending("Adventure Shows"),                             // 13
+                HomeRowLoadingState.Pending("Comedy Shows"),                                // 14
+                HomeRowLoadingState.Pending("Crime Shows"),                                 // 15
+                HomeRowLoadingState.Pending("Documentary Shows"),                           // 16
+                HomeRowLoadingState.Pending("Drama Shows"),                                 // 17
+                HomeRowLoadingState.Pending("Family Shows"),                                // 18
+                HomeRowLoadingState.Pending("Fantasy Shows"),                               // 19
+                HomeRowLoadingState.Pending("History Shows"),                               // 20
+                HomeRowLoadingState.Pending("War Shows"),                                   // 21
+                HomeRowLoadingState.Pending("Western Shows"),                               // 22
                 HomeRowLoadingState.Pending(context.getString(R.string.recently_released)), // 23
-                HomeRowLoadingState.Pending(context.getString(R.string.recently_added)) // 24
+                HomeRowLoadingState.Pending(context.getString(R.string.recently_added))    // 24
             )
         )
+
+    override fun favoritesRowIndices(): List<Int> = listOf(2, 3)
+
+    // FIX: Re-fetches only Continue Watching (row 0) and Next Up (row 1) and
+    // updates them in place — all other rows are left untouched so they don't
+    // reload or flicker. This is called every ON_RESUME from RecommendedContent.
+    override fun refreshWatchingRows() {
+        viewModelScope.launch(Dispatchers.IO + ExceptionHandler()) {
+            try {
+                val preferences = preferencesDataStore.data.firstOrNull() ?: AppPreferences.getDefaultInstance()
+                val combineNextUp = preferences.homePagePreferences.combineContinueNext
+                val itemsPerRow = preferences.homePagePreferences.maxItemsPerRow
+                val userId = serverRepository.currentUser.value?.id
+
+                val resumeItemsDeferred = async(Dispatchers.IO) {
+                    val request = GetResumeItemsRequest(
+                        userId = userId,
+                        parentId = parentId,
+                        fields = SlimItemFields,
+                        includeItemTypes = listOf(BaseItemKind.EPISODE),
+                        enableUserData = true,
+                        startIndex = 0,
+                        limit = itemsPerRow,
+                        enableTotalRecordCount = false,
+                    )
+                    GetResumeItemsRequestHandler.execute(api, request).toBaseItems(api, false)
+                }
+
+                val nextUpItemsDeferred = async(Dispatchers.IO) {
+                    val request = GetNextUpRequest(
+                        userId = userId,
+                        fields = SlimItemFields,
+                        imageTypeLimit = 1,
+                        parentId = parentId,
+                        limit = itemsPerRow,
+                        enableResumable = false,
+                        enableUserData = true,
+                        enableRewatching = preferences.homePagePreferences.enableRewatchingNextUp,
+                    )
+                    GetNextUpRequestHandler.execute(api, request).toBaseItems(api, true)
+                }
+
+                val resumeItems = resumeItemsDeferred.await()
+                val nextUpItems = nextUpItemsDeferred.await()
+
+                if (combineNextUp) {
+                    val combined = lastestNextUpService.buildCombined(resumeItems, nextUpItems)
+                    rows.update { current ->
+                        current.toMutableList().apply {
+                            set(0, HomeRowLoadingState.Success(
+                                context.getString(R.string.continue_watching),
+                                combined,
+                                viewOptions = continueWatchingOptions
+                            ))
+                        }
+                    }
+                } else {
+                    rows.update { current ->
+                        current.toMutableList().apply {
+                            set(0, HomeRowLoadingState.Success(
+                                context.getString(R.string.continue_watching),
+                                resumeItems,
+                                viewOptions = continueWatchingOptions
+                            ))
+                            set(1, HomeRowLoadingState.Success(
+                                context.getString(R.string.next_up),
+                                nextUpItems,
+                                viewOptions = nextUpOptions
+                            ))
+                        }
+                    }
+                }
+            } catch (ex: Exception) {
+                Timber.e(ex, "Exception refreshing TV watching rows")
+            }
+        }
+    }
+
+    override fun reloadFavoritesRows() {
+        viewModelScope.launch(Dispatchers.IO + ExceptionHandler()) {
+            try {
+                val request = GetItemsRequest(
+                    parentId = parentId,
+                    fields = SlimItemFields,
+                    includeItemTypes = listOf(BaseItemKind.SERIES),
+                    recursive = true,
+                    enableUserData = true,
+                    isFavorite = true,
+                    sortBy = listOf(ItemSortBy.RANDOM),
+                    enableTotalRecordCount = false,
+                )
+                val items = GetItemsRequestHandler.execute(api, request).toBaseItems(api, false)
+                    .distinctBy { it.id }
+                val successState = HomeRowLoadingState.Success("Favorite Shows", items)
+                rows.update { current -> current.toMutableList().apply { set(2, successState) } }
+            } catch (ex: Exception) {
+                Timber.e(ex, "Exception reloading favorite shows row")
+            }
+
+            try {
+                val request = GetItemsRequest(
+                    parentId = parentId,
+                    fields = SlimItemFields,
+                    includeItemTypes = listOf(BaseItemKind.EPISODE),
+                    recursive = true,
+                    enableUserData = true,
+                    isFavorite = true,
+                    sortBy = listOf(ItemSortBy.RANDOM),
+                    enableTotalRecordCount = false,
+                )
+                val items = GetItemsRequestHandler.execute(api, request).toBaseItems(api, false)
+                    .distinctBy { it.id }
+                val successState = HomeRowLoadingState.Success("Favorite Episodes", items, viewOptions = continueWatchingOptions)
+                rows.update { current -> current.toMutableList().apply { set(3, successState) } }
+            } catch (ex: Exception) {
+                Timber.e(ex, "Exception reloading favorite episodes row")
+            }
+        }
+    }
+
+    override fun refreshRecentRows() {
+        viewModelScope.launch(Dispatchers.IO + ExceptionHandler()) {
+            try {
+                val itemsPerRow =
+                    preferencesDataStore.data.firstOrNull()?.homePagePreferences?.maxItemsPerRow
+                        ?: AppPreferences.getDefaultInstance().homePagePreferences.maxItemsPerRow
+
+                val request = GetItemsRequest(
+                    parentId = parentId,
+                    fields = SlimItemFields,
+                    includeItemTypes = listOf(BaseItemKind.EPISODE),
+                    recursive = true,
+                    enableUserData = true,
+                    sortBy = listOf(ItemSortBy.DATE_CREATED),
+                    sortOrder = listOf(SortOrder.DESCENDING),
+                    startIndex = 0,
+                    limit = itemsPerRow,
+                    enableTotalRecordCount = false,
+                )
+                val items = GetItemsRequestHandler.execute(api, request).toBaseItems(api, true)
+                val successState = HomeRowLoadingState.Success(context.getString(R.string.recently_added), items)
+                update(R.string.recently_added, successState)
+            } catch (ex: Exception) {
+                Timber.e(ex, "Exception refreshing recently added shows row")
+            }
+        }
+    }
 
     override fun init() {
         viewModelScope.launch(Dispatchers.IO + ExceptionHandler()) {
@@ -235,13 +383,11 @@ constructor(
                         recursive = true,
                         enableUserData = true,
                         isFavorite = true,
-                        sortBy = listOf(ItemSortBy.DATE_CREATED),
-                        sortOrder = listOf(SortOrder.DESCENDING),
-                        startIndex = 0,
-                        limit = itemsPerRow,
+                        sortBy = listOf(ItemSortBy.RANDOM),
                         enableTotalRecordCount = false,
                     )
                     val items = GetItemsRequestHandler.execute(api, request).toBaseItems(api, false)
+                        .distinctBy { it.id }
                     val successState = HomeRowLoadingState.Success("Favorite Shows", items)
                     rows.update { current -> current.toMutableList().apply { set(2, successState) } }
                     successState
@@ -262,13 +408,11 @@ constructor(
                         recursive = true,
                         enableUserData = true,
                         isFavorite = true,
-                        sortBy = listOf(ItemSortBy.DATE_CREATED),
-                        sortOrder = listOf(SortOrder.DESCENDING),
-                        startIndex = 0,
-                        limit = itemsPerRow,
+                        sortBy = listOf(ItemSortBy.RANDOM),
                         enableTotalRecordCount = false,
                     )
                     val items = GetItemsRequestHandler.execute(api, request).toBaseItems(api, false)
+                        .distinctBy { it.id }
                     val successState = HomeRowLoadingState.Success("Favorite Episodes", items, viewOptions = continueWatchingOptions)
                     rows.update { current -> current.toMutableList().apply { set(3, successState) } }
                     successState
@@ -289,8 +433,7 @@ constructor(
                         recursive = true,
                         enableUserData = true,
                         isPlayed = false,
-                        sortBy = listOf(ItemSortBy.COMMUNITY_RATING),
-                        sortOrder = listOf(SortOrder.DESCENDING),
+                        sortBy = listOf(ItemSortBy.RANDOM),
                         startIndex = 0,
                         limit = itemsPerRow,
                         enableTotalRecordCount = false,
@@ -308,23 +451,23 @@ constructor(
             jobs.add(topUnwatchedJob)
 
             val genresToAdd = listOf(
-                Triple("Sci-Fi", 6, listOf("Sci-Fi", "Science Fiction")),
-                Triple("Action", 7, listOf("Action")),
-                Triple("Adventure", 8, listOf("Adventure")),
-                Triple("Animation", 9, listOf("Animation")),
-                Triple("Comedy", 10, listOf("Comedy")),
-                Triple("Crime", 11, listOf("Crime")),
-                Triple("Documentary", 12, listOf("Documentary")),
-                Triple("Drama", 13, listOf("Drama")),
-                Triple("Family", 14, listOf("Family")),
-                Triple("Fantasy", 15, listOf("Fantasy")),
-                Triple("History", 16, listOf("History")),
-                Triple("Horror", 17, listOf("Horror")),
-                Triple("Mystery", 18, listOf("Mystery")),
-                Triple("Romance", 19, listOf("Romance")),
-                Triple("Thriller", 20, listOf("Thriller")),
-                Triple("War", 21, listOf("War")),
-                Triple("Western", 22, listOf("Western"))
+                Triple("Sci-Fi",       6,  listOf("Sci-Fi", "Science Fiction")),
+                Triple("Horror",       7,  listOf("Horror")),
+                Triple("Thriller",     8,  listOf("Thriller")),
+                Triple("Animation",    9,  listOf("Animation")),
+                Triple("Mystery",      10, listOf("Mystery")),
+                Triple("Romance",      11, listOf("Romance")),
+                Triple("Action",       12, listOf("Action")),
+                Triple("Adventure",    13, listOf("Adventure")),
+                Triple("Comedy",       14, listOf("Comedy")),
+                Triple("Crime",        15, listOf("Crime")),
+                Triple("Documentary",  16, listOf("Documentary")),
+                Triple("Drama",        17, listOf("Drama")),
+                Triple("Family",       18, listOf("Family")),
+                Triple("Fantasy",      19, listOf("Fantasy")),
+                Triple("History",      20, listOf("History")),
+                Triple("War",          21, listOf("War")),
+                Triple("Western",      22, listOf("Western"))
             )
 
             genresToAdd.forEach { (genreTitle, slotIndex, genreQueryList) ->
@@ -337,8 +480,7 @@ constructor(
                             recursive = true,
                             enableUserData = true,
                             genres = genreQueryList,
-                            sortBy = listOf(ItemSortBy.COMMUNITY_RATING),
-                            sortOrder = listOf(SortOrder.DESCENDING),
+                            sortBy = listOf(ItemSortBy.RANDOM),
                             startIndex = 0,
                             limit = itemsPerRow,
                             enableTotalRecordCount = false,

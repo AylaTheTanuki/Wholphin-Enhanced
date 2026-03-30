@@ -34,172 +34,172 @@ import kotlin.time.Duration.Companion.milliseconds
 
 @Singleton
 class LatestNextUpService
-    @Inject
-    constructor(
-        @param:ApplicationContext private val context: Context,
-        private val api: ApiClient,
-        private val datePlayedService: DatePlayedService,
-    ) {
-        suspend fun getResume(
-            userId: UUID,
-            limit: Int,
-            includeEpisodes: Boolean,
-            useSeriesForPrimary: Boolean = true,
-        ): List<BaseItem> {
-            val request =
-                GetResumeItemsRequest(
-                    userId = userId,
-                    fields = SlimItemFields,
-                    limit = limit,
-                    includeItemTypes =
-                        if (includeEpisodes) {
-                            supportItemKinds
-                        } else {
-                            supportItemKinds
-                                .toMutableSet()
-                                .apply {
-                                    remove(BaseItemKind.EPISODE)
-                                }
-                        },
-                    enableImageTypes =
-                        listOf(
-                            ImageType.PRIMARY,
-                            ImageType.THUMB,
-                            ImageType.BACKDROP,
-                        ),
-                )
-            val items =
-                api.itemsApi
-                    .getResumeItems(request)
-                    .content
-                    .items
-                    .map { BaseItem.from(it, api, useSeriesForPrimary) }
-            return items
-        }
+@Inject
+constructor(
+    @param:ApplicationContext private val context: Context,
+    private val api: ApiClient,
+    private val datePlayedService: DatePlayedService,
+) {
+    suspend fun getResume(
+        userId: UUID,
+        limit: Int,
+        includeEpisodes: Boolean,
+        useSeriesForPrimary: Boolean = true,
+    ): List<BaseItem> {
+        val request =
+            GetResumeItemsRequest(
+                userId = userId,
+                fields = SlimItemFields,
+                limit = limit,
+                includeItemTypes =
+                    if (includeEpisodes) {
+                        supportItemKinds
+                    } else {
+                        supportItemKinds
+                            .toMutableSet()
+                            .apply {
+                                remove(BaseItemKind.EPISODE)
+                            }
+                    },
+                enableImageTypes =
+                    listOf(
+                        ImageType.PRIMARY,
+                        ImageType.THUMB,
+                        ImageType.BACKDROP,
+                    ),
+            )
+        val items =
+            api.itemsApi
+                .getResumeItems(request)
+                .content
+                .items
+                .map { BaseItem.from(it, api, useSeriesForPrimary) }
+        return items
+    }
 
-        suspend fun getNextUp(
-            userId: UUID,
-            limit: Int,
-            enableRewatching: Boolean,
-            enableResumable: Boolean,
-            maxDays: Int,
-            useSeriesForPrimary: Boolean = true,
-        ): List<BaseItem> {
-            val nextUpDateCutoff =
-                maxDays.takeIf { it > 0 }?.let { LocalDateTime.now().minusDays(it.toLong()) }
-            val request =
-                GetNextUpRequest(
-                    userId = userId,
-                    fields = SlimItemFields,
-                    imageTypeLimit = 1,
-                    parentId = null,
-                    limit = limit,
-                    enableResumable = enableResumable,
-                    enableUserData = true,
-                    enableRewatching = enableRewatching,
-                    nextUpDateCutoff = nextUpDateCutoff,
-                )
-            val nextUp =
-                api.tvShowsApi
-                    .getNextUp(request)
-                    .content
-                    .items
-                    .map { BaseItem.from(it, api, useSeriesForPrimary) }
-            return nextUp
-        }
+    suspend fun getNextUp(
+        userId: UUID,
+        limit: Int,
+        enableRewatching: Boolean,
+        enableResumable: Boolean,
+        maxDays: Int,
+        useSeriesForPrimary: Boolean = true,
+    ): List<BaseItem> {
+        val nextUpDateCutoff =
+            maxDays.takeIf { it > 0 }?.let { LocalDateTime.now().minusDays(it.toLong()) }
+        val request =
+            GetNextUpRequest(
+                userId = userId,
+                fields = SlimItemFields,
+                imageTypeLimit = 1,
+                parentId = null,
+                limit = limit,
+                enableResumable = enableResumable,
+                enableUserData = true,
+                enableRewatching = enableRewatching,
+                nextUpDateCutoff = nextUpDateCutoff,
+            )
+        val nextUp =
+            api.tvShowsApi
+                .getNextUp(request)
+                .content
+                .items
+                .map { BaseItem.from(it, api, useSeriesForPrimary) }
+        return nextUp
+    }
 
-        suspend fun getLatest(
-            user: UserDto,
-            limit: Int,
-            includedIds: List<UUID>,
-        ): List<LatestData> {
-            val excluded = user.configuration?.latestItemsExcludes.orEmpty()
-            val views by api.userViewsApi.getUserViews()
-            val latestData =
-                views.items
-                    .filter {
-                        it.id in includedIds && it.id !in excluded &&
+    suspend fun getLatest(
+        user: UserDto,
+        limit: Int,
+        includedIds: List<UUID>,
+    ): List<LatestData> {
+        val excluded = user.configuration?.latestItemsExcludes.orEmpty()
+        val views by api.userViewsApi.getUserViews()
+        val latestData =
+            views.items
+                .filter {
+                    it.id in includedIds && it.id !in excluded &&
                             it.collectionType in supportedLatestCollectionTypes
-                    }.map { view ->
-                        val title =
-                            view.name?.let { context.getString(R.string.recently_added_in, it) }
-                                ?: context.getString(R.string.recently_added)
-                        val request =
-                            GetLatestMediaRequest(
-                                fields = SlimItemFields,
-                                imageTypeLimit = 1,
-                                parentId = view.id,
-                                groupItems = true,
-                                limit = limit,
-                                isPlayed = null, // Server will handle user's preference
-                            )
-                        LatestData(title, request)
-                    }
-
-            return latestData
-        }
-
-        suspend fun loadLatest(latestData: List<LatestData>): List<HomeRowLoadingState> {
-            val rows =
-                latestData.mapNotNull { (title, request) ->
-                    try {
-                        val latest =
-                            api.userLibraryApi
-                                .getLatestMedia(request)
-                                .content
-                                .map { BaseItem.from(it, api, true) }
-                        if (latest.isNotEmpty()) {
-                            HomeRowLoadingState.Success(
-                                title = title,
-                                items = latest,
-                            )
-                        } else {
-                            null
-                        }
-                    } catch (ex: Exception) {
-                        Timber.e(ex, "Exception fetching %s", title)
-                        HomeRowLoadingState.Error(
-                            title = title,
-                            exception = ex,
+                }.map { view ->
+                    val title =
+                        view.name?.let { context.getString(R.string.recently_added_in, it) }
+                            ?: context.getString(R.string.recently_added)
+                    val request =
+                        GetLatestMediaRequest(
+                            fields = SlimItemFields,
+                            imageTypeLimit = 1,
+                            parentId = view.id,
+                            groupItems = true,
+                            limit = limit,
+                            isPlayed = null, // Server will handle user's preference
                         )
-                    }
+                    LatestData(title, request)
                 }
-            return rows
-        }
 
-        suspend fun buildCombined(
-            resume: List<BaseItem>,
-            nextUp: List<BaseItem>,
-        ): List<BaseItem> =
-            withContext(Dispatchers.IO) {
-                val start = System.currentTimeMillis()
-                val semaphore = Semaphore(3)
-                val deferred =
-                    nextUp
-                        .filter { it.data.seriesId != null }
-                        .map { item ->
-                            async(Dispatchers.IO) {
-                                try {
-                                    semaphore.withPermit {
-                                        datePlayedService.getLastPlayed(item)
-                                    }
-                                } catch (ex: Exception) {
-                                    Timber.e(ex, "Error fetching %s", item.id)
-                                    null
+        return latestData
+    }
+
+    suspend fun loadLatest(latestData: List<LatestData>): List<HomeRowLoadingState> {
+        val rows =
+            latestData.mapNotNull { (title, request) ->
+                try {
+                    val latest =
+                        api.userLibraryApi
+                            .getLatestMedia(request)
+                            .content
+                            .map { BaseItem.from(it, api, true) }
+                    if (latest.isNotEmpty()) {
+                        HomeRowLoadingState.Success(
+                            title = title,
+                            items = latest,
+                        )
+                    } else {
+                        null
+                    }
+                } catch (ex: Exception) {
+                    Timber.e(ex, "Exception fetching %s", title)
+                    HomeRowLoadingState.Error(
+                        title = title,
+                        exception = ex,
+                    )
+                }
+            }
+        return rows
+    }
+
+    suspend fun buildCombined(
+        resume: List<BaseItem>,
+        nextUp: List<BaseItem>,
+    ): List<BaseItem> =
+        withContext(Dispatchers.IO) {
+            val start = System.currentTimeMillis()
+            val semaphore = Semaphore(3)
+            val deferred =
+                nextUp
+                    .filter { it.data.seriesId != null }
+                    .map { item ->
+                        async(Dispatchers.IO) {
+                            try {
+                                semaphore.withPermit {
+                                    datePlayedService.getLastPlayed(item)
                                 }
+                            } catch (ex: Exception) {
+                                Timber.e(ex, "Error fetching %s", item.id)
+                                null
                             }
                         }
+                    }
 
-                val nextUpLastPlayed = deferred.awaitAll()
-                val timestamps = mutableMapOf<UUID, LocalDateTime?>()
-                nextUp.map { it.id }.zip(nextUpLastPlayed).toMap(timestamps)
-                resume.forEach { timestamps[it.id] = it.data.userData?.lastPlayedDate }
-                val result = (resume + nextUp).sortedByDescending { timestamps[it.id] }
-                val duration = (System.currentTimeMillis() - start).milliseconds
-                Timber.v("buildCombined took %s", duration)
-                return@withContext result
-            }
-    }
+            val nextUpLastPlayed = deferred.awaitAll()
+            val timestamps = mutableMapOf<UUID, LocalDateTime?>()
+            nextUp.map { it.id }.zip(nextUpLastPlayed).toMap(timestamps)
+            resume.forEach { timestamps[it.id] = it.data.userData?.lastPlayedDate }
+            val result = (resume + nextUp).sortedByDescending { timestamps[it.id] }
+            val duration = (System.currentTimeMillis() - start).milliseconds
+            Timber.v("buildCombined took %s", duration)
+            return@withContext result
+        }
+}
 
 val supportedLatestCollectionTypes =
     setOf(

@@ -14,26 +14,33 @@ class FavoriteWatchManager
     constructor(
         private val api: ApiClient,
         private val datePlayedService: DatePlayedService,
+        private val favoritesEventBus: FavoritesEventBus,
+        private val watchedEventBus: WatchedEventBus,
     ) {
         suspend fun setWatched(
             itemId: UUID,
             played: Boolean,
         ): UserItemDataDto {
             datePlayedService.invalidate(itemId)
-            return if (played) {
+            val result = if (played) {
                 api.playStateApi.markPlayedItem(itemId).content
             } else {
                 api.playStateApi.markUnplayedItem(itemId).content
             }
+            watchedEventBus.emit(WatchedEvent(itemId, played))
+            return result
         }
 
         suspend fun setFavorite(
             itemId: UUID,
             favorite: Boolean,
-        ): UserItemDataDto =
-            if (favorite) {
+        ): UserItemDataDto {
+            val result = if (favorite) {
                 api.userLibraryApi.markFavoriteItem(itemId).content
             } else {
                 api.userLibraryApi.unmarkFavoriteItem(itemId).content
             }
+            favoritesEventBus.emit(FavoriteEvent(itemId, favorite))
+            return result
+        }
     }

@@ -86,7 +86,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
+import org.jellyfin.sdk.api.client.exception.InvalidStatusException
 import org.jellyfin.sdk.api.client.extensions.systemApi
 import org.jellyfin.sdk.model.api.BaseItemKind
 import org.jellyfin.sdk.model.serializer.toUUIDOrNull
@@ -145,11 +147,15 @@ class MainActivity : AppCompatActivity() {
 
     private var forceInteractionReset: (() -> Unit)? = null
 
+    private var justCreated = false
+
+    private var lastAmbientDismissAt = 0L
+
     @OptIn(ExperimentalTvMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         instance = this
-        Timber.i("MainActivity.onCreate: savedInstanceState is null=${savedInstanceState == null}")
+        Timber.d("BREADCRUMB: MAIN - onCreate triggered")
         lifecycle.addObserver(playbackLifecycleObserver)
         if (savedInstanceState == null) {
             lifecycleScope.launchIO {
@@ -166,6 +172,7 @@ class MainActivity : AppCompatActivity() {
                 window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
             }
         }
+        justCreated = true
         viewModel.appStart()
         setContent {
             val appPreferences by userPreferencesDataStore.data.collectAsState(null)
@@ -207,7 +214,6 @@ class MainActivity : AppCompatActivity() {
                     DebugLogTree.INSTANCE.enabled = appPreferences.debugLogging
                 }
 
-                // Changed idle timeout back to 10 minutes
                 var lastInteractionTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
                 val idleTimeout = 10 * 60 * 1000L // 10 minutes
 
@@ -238,8 +244,7 @@ class MainActivity : AppCompatActivity() {
                                 .background(MaterialTheme.colorScheme.background)
                                 .onPreviewKeyEvent {
                                     lastInteractionTime = System.currentTimeMillis()
-                                    if (navigationManager.backStack.lastOrNull() is Destination.AmbientScreensaver) {
-                                        navigationManager.goBack()
+                                    if (dismissAmbientScreensaverIfVisible(consumeIfRecentlyDismissed = true)) {
                                         return@onPreviewKeyEvent true
                                     }
                                     false
@@ -257,6 +262,7 @@ class MainActivity : AppCompatActivity() {
                                     ),
                                 entryProvider = { key ->
                                     key as SetupDestination
+                                    Timber.d("BREADCRUMB: MAIN - NavDisplay provided key: $key")
                                     NavEntry(key) {
                                         when (key) {
                                             SetupDestination.Loading -> WholphinSplashScreen()
@@ -265,7 +271,6 @@ class MainActivity : AppCompatActivity() {
                                             is SetupDestination.AppContent -> {
                                                 val current = key.current
                                                 ProvideLocalClock {
-                                                    // UPDATE CHECKER REMOVED FOR CUSTOM BUILD
                                                     val appPreferences by userPreferencesDataStore.data.collectAsState(appPreferences)
                                                     val preferences = remember(appPreferences) { UserPreferences(appPreferences) }
                                                     var showContent by remember { mutableStateOf(true) }
@@ -274,6 +279,10 @@ class MainActivity : AppCompatActivity() {
                                                         if (!preferences.appPreferences.signInAutomatically) {
                                                             showContent = false
                                                         }
+                                                    }
+
+                                                    LifecycleEventEffect(Lifecycle.Event.ON_START) {
+                                                        showContent = true
                                                     }
 
                                                     if (showContent) {
@@ -286,9 +295,7 @@ class MainActivity : AppCompatActivity() {
                                                             preferences = preferences,
                                                             onInteraction = {
                                                                 lastInteractionTime = System.currentTimeMillis()
-                                                                if (navigationManager.backStack.lastOrNull() is Destination.AmbientScreensaver) {
-                                                                    navigationManager.goBack()
-                                                                }
+                                                                dismissAmbientScreensaverIfVisible()
                                                             },
                                                             modifier = Modifier.fillMaxSize(),
                                                         )
@@ -348,64 +355,160 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        Timber.d("onResume")
+        Timber.d("BREADCRUMB: MAIN - onResume")
         lifecycleScope.launchIO {
             appUpgradeHandler.run()
         }
 
         forceInteractionReset?.invoke()
-        if (::navigationManager.isInitialized) {
-            if (navigationManager.backStack.lastOrNull() is Destination.AmbientScreensaver) {
+        dismissAmbientScreensaverIfVisible()
+    }
+
+    private fun dismissAmbientScreensaverIfVisible(
+        consumeIfRecentlyDismissed: Boolean = false,
+    ): Boolean {
+        if (!::navigationManager.isInitialized) return false
+
+        val now = System.currentTimeMillis()
+        val dismissedRecently = now - lastAmbientDismissAt <= AMBIENT_DISMISS_DEBOUNCE_MS
+        val currentDestination = navigationManager.backStack.lastOrNull()
+
+        if (currentDestination is Destination.AmbientScreensaver) {
+            if (!dismissedRecently) {
+                lastAmbientDismissAt = now
                 navigationManager.goBack()
             }
+            return true
         }
+
+        return consumeIfRecentlyDismissed && dismissedRecently
     }
 
     override fun onRestart() {
         super.onRestart()
-        Timber.d("onRestart")
-        viewModel.appStart()
+        Timber.d("BREADCRUMB: MAIN - onRestart")
+
+        if (justCreated) {
+            justCreated = false
+            Timber.d("BREADCRUMB: MAIN - onRestart skipped (just created)")
+            return
+        }
+        justCreated = false
+
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val prefs = userPreferencesDataStore.data.firstOrNull()
+                Timber.d("BREADCRUMB: MAIN - onRestart: signInAutomatically=${prefs?.signInAutomatically}, serverId=${prefs?.currentServerId}, userId=${prefs?.currentUserId}")
+
+                if (prefs?.signInAutomatically == false) {
+                    val currentServer = viewModel.serverRepository.currentServer.value
+                    if (currentServer != null) {
+                        Timber.d("BREADCRUMB: MAIN - onRestart (Auto sign-in OFF), going to UserList for server ${currentServer.name}")
+                        setupNavigationManager.backStack.clear()
+                        setupNavigationManager.backStack.add(SetupDestination.UserList(currentServer))
+                        return@launch
+                    } else {
+                        Timber.d("BREADCRUMB: MAIN - onRestart (Auto sign-in OFF), no current server, running appStart")
+                        viewModel.appStart()
+                        return@launch
+                    }
+                }
+
+                val serverId = prefs?.currentServerId?.toUUIDOrNull()
+                val userId = prefs?.currentUserId?.toUUIDOrNull()
+                Timber.d("BREADCRUMB: MAIN - onRestart: parsed serverId=$serverId, userId=$userId")
+
+                if (serverId != null && userId != null) {
+                    val currentSession = viewModel.serverRepository.current.value
+                    if (currentSession != null &&
+                        currentSession.server.id == serverId &&
+                        currentSession.user.id == userId) {
+                        Timber.d("BREADCRUMB: MAIN - onRestart: session already active for ${currentSession.user.name}, skipping restore")
+                        return@launch
+                    }
+
+                    Timber.d("BREADCRUMB: MAIN - onRestart: attempting restoreSession")
+                    try {
+                        val result = withTimeoutOrNull(8000) {
+                            viewModel.serverRepository.restoreSession(serverId, userId)
+                        }
+                        if (result != null) {
+                            Timber.d("BREADCRUMB: MAIN - onRestart session restored for ${result.user.name}")
+                            val currentDest = setupNavigationManager.backStack.lastOrNull()
+                            if (currentDest !is SetupDestination.AppContent) {
+                                Timber.d("BREADCRUMB: MAIN - onRestart: navigating to AppContent after restore")
+                                setupNavigationManager.navigateTo(SetupDestination.AppContent(result))
+                            }
+                        } else {
+                            Timber.w("BREADCRUMB: MAIN - onRestart: restoreSession timed out or returned null")
+                            val knownServer = viewModel.serverRepository.currentServer.value
+                            if (knownServer != null) {
+                                Timber.d("BREADCRUMB: MAIN - onRestart: going to UserList for known server ${knownServer.name}")
+                                setupNavigationManager.navigateTo(SetupDestination.UserList(knownServer))
+                            } else {
+                                Timber.d("BREADCRUMB: MAIN - onRestart: no known server, running appStart")
+                                viewModel.appStart()
+                            }
+                        }
+                    } catch (ex: Exception) {
+                        Timber.w(ex, "BREADCRUMB: MAIN - onRestart restore failed")
+                        val knownServer = viewModel.serverRepository.currentServer.value
+                        if (knownServer != null) {
+                            Timber.d("BREADCRUMB: MAIN - onRestart: exception during restore, going to UserList for ${knownServer.name}")
+                            setupNavigationManager.navigateTo(SetupDestination.UserList(knownServer))
+                        } else {
+                            viewModel.appStart()
+                        }
+                    }
+                } else {
+                    Timber.d("BREADCRUMB: MAIN - onRestart: no saved IDs in DataStore")
+                    val knownServer = viewModel.serverRepository.currentServer.value
+                    if (knownServer != null) {
+                        Timber.d("BREADCRUMB: MAIN - onRestart: no IDs but have server, going to UserList for ${knownServer.name}")
+                        setupNavigationManager.navigateTo(SetupDestination.UserList(knownServer))
+                    } else {
+                        Timber.d("BREADCRUMB: MAIN - onRestart: no IDs, no server, running appStart")
+                        viewModel.appStart()
+                    }
+                }
+            } catch (ex: InvalidStatusException) {
+                Timber.w("BREADCRUMB: MAIN - onRestart HTTP ${ex.status}")
+                if (ex.status == 401) {
+                    Timber.w("BREADCRUMB: MAIN - onRestart 401 Unauthorized, running appStart")
+                    viewModel.appStart()
+                } else {
+                    viewModel.appStart()
+                }
+            } catch (ex: Exception) {
+                Timber.e(ex, "BREADCRUMB: MAIN - onRestart unexpected error, running appStart")
+                viewModel.appStart()
+            }
+        }
     }
 
     override fun onStop() {
         super.onStop()
-        Timber.d("onStop")
+        Timber.d("BREADCRUMB: MAIN - onStop")
         tvProviderSchedulerService.launchOneTimeRefresh()
     }
 
     override fun onPause() {
         super.onPause()
-        Timber.d("onPause")
+        Timber.d("BREADCRUMB: MAIN - onPause")
     }
 
     override fun onStart() {
         super.onStart()
-        Timber.d("onStart")
-    }
-
-    override fun onSaveInstanceState(outState: Bundle) {
-        super.onSaveInstanceState(outState)
-        Timber.d("onSaveInstanceState")
-    }
-
-    override fun onRestoreInstanceState(savedInstanceState: Bundle) {
-        super.onRestoreInstanceState(savedInstanceState)
-        Timber.d("onRestoreInstanceState")
+        Timber.d("BREADCRUMB: MAIN - onStart")
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        Timber.d("onDestroy")
-    }
-
-    override fun onConfigurationChanged(newConfig: Configuration) {
-        super.onConfigurationChanged(newConfig)
-        Timber.d("onConfigurationChanged")
+        Timber.d("BREADCRUMB: MAIN - onDestroy")
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        Timber.v("onNewIntent")
         setIntent(intent)
         extractDestination(intent)?.let {
             navigationManager.replace(it)
@@ -451,6 +554,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     companion object {
+        private const val AMBIENT_DISMISS_DEBOUNCE_MS = 750L
+
         const val INTENT_ITEM_ID = "itemId"
         const val INTENT_ITEM_TYPE = "itemType"
         const val INTENT_SERIES_ID = "seriesId"
@@ -475,51 +580,58 @@ constructor(
 ) : ViewModel() {
     fun appStart() {
         viewModelScope.launchIO {
+            Timber.d("BREADCRUMB: VIEWMODEL - appStart sequence initiated")
             try {
-                // Artificial delay for splash screen visibility
                 delay(1500)
-
                 val prefs = preferences.data.firstOrNull() ?: AppPreferences.getDefaultInstance()
                 val userHasPin = serverRepository.currentUser.value?.hasPin == true
+                val hardcodedUrl = "http://10.0.0.105:8096"
+                val hardcodedServerId = UUID.nameUUIDFromBytes(hardcodedUrl.toByteArray())
 
-                val serverId = prefs.currentServerId?.toUUIDOrNull()
-                val userId = prefs.currentUserId?.toUUIDOrNull()
+                val api = serverRepository.jellyfin.createApi(hardcodedUrl)
+                val systemInfo = try {
+                    api.systemApi.getPublicSystemInfo().content
+                } catch (ex: Exception) {
+                    Timber.w(ex, "BREADCRUMB: VIEWMODEL - appStart failed to fetch system info")
+                    null
+                }
+
+                val server = JellyfinServer(
+                    id = systemInfo?.id?.toUUIDOrNull() ?: hardcodedServerId,
+                    name = systemInfo?.serverName ?: "Jellyfin",
+                    url = hardcodedUrl,
+                    version = systemInfo?.version
+                )
+
+                serverRepository.addAndChangeServer(server)
+                Timber.d("BREADCRUMB: VIEWMODEL - appStart: server registered, signInAuto=${prefs.signInAutomatically}, userHasPin=$userHasPin")
 
                 if (prefs.signInAutomatically && !userHasPin) {
-                    val current = serverRepository.restoreSession(serverId, userId)
+                    val savedUserId = prefs.currentUserId?.toUUIDOrNull()
+                    Timber.d("BREADCRUMB: VIEWMODEL - appStart: attempting restoreSession for userId=$savedUserId")
+                    val current = serverRepository.restoreSession(server.id, savedUserId)
                     if (current != null) {
                         if (current.user.hasPin) {
+                            Timber.d("BREADCRUMB: VIEWMODEL - restoreSession SUCCESS, user has pin -> UserList")
                             navigationManager.navigateTo(SetupDestination.UserList(current.server))
                         } else {
-                            // Restored
+                            Timber.d("BREADCRUMB: VIEWMODEL - restoreSession SUCCESS -> AppContent")
                             navigationManager.navigateTo(SetupDestination.AppContent(current))
                         }
                     } else {
-                        // Could not restore session, go to server list (default) or last used server's user list
-                        val lastServer = serverRepository.fetchLastUsedServer(serverId)
-                        if (lastServer != null) {
-                            navigationManager.navigateTo(SetupDestination.UserList(lastServer))
-                        } else {
-                            navigationManager.navigateTo(SetupDestination.ServerList)
-                        }
+                        Timber.d("BREADCRUMB: VIEWMODEL - restoreSession FAILED -> UserList")
+                        navigationManager.navigateTo(SetupDestination.UserList(server))
                     }
                 } else {
-                    // Manual sign in required
-                    val lastServer = serverRepository.fetchLastUsedServer(serverId)
-                    if (lastServer != null) {
-                        navigationManager.navigateTo(SetupDestination.UserList(lastServer))
-                    } else {
-                        navigationManager.navigateTo(SetupDestination.ServerList)
-                    }
+                    Timber.d("BREADCRUMB: VIEWMODEL - auto sign-in disabled or user has pin -> UserList")
+                    navigationManager.navigateTo(SetupDestination.UserList(server))
                 }
             } catch (ex: Exception) {
-                Timber.e(ex, "Error during appStart")
-                navigationManager.navigateTo(SetupDestination.ServerList)
+                Timber.e(ex, "BREADCRUMB: VIEWMODEL - Error during appStart")
+                val hardcodedUrl = "http://10.0.0.105:8096"
+                val hardcodedServerId = UUID.nameUUIDFromBytes(hardcodedUrl.toByteArray())
+                navigationManager.navigateTo(SetupDestination.UserList(JellyfinServer(hardcodedServerId, "Jellyfin", hardcodedUrl, null)))
             }
-        }
-        viewModelScope.launchIO {
-            // Create the mediaCodecCapabilitiesTest if needed
-            deviceProfileService.mediaCodecCapabilitiesTest.supportsAVC()
         }
     }
 }

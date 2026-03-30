@@ -11,6 +11,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.livedata.observeAsState
@@ -67,6 +68,7 @@ import com.github.damontecres.wholphin.ui.discover.DiscoverRow
 import com.github.damontecres.wholphin.ui.discover.DiscoverRowData
 import com.github.damontecres.wholphin.ui.nav.Destination
 import com.github.damontecres.wholphin.ui.rememberInt
+import com.github.damontecres.wholphin.ui.tryRequestFocusAfterLayout
 import com.github.damontecres.wholphin.util.DataLoadingState
 import com.github.damontecres.wholphin.util.ExceptionHandler
 import com.github.damontecres.wholphin.util.LoadingState
@@ -93,9 +95,10 @@ fun MovieDetails(
 ) {
     val context = LocalContext.current
     LifecycleResumeEffect(Unit) {
-        viewModel.init()
+        viewModel.onResumePage()
         onPauseOrDispose { }
     }
+
     val item by viewModel.item.observeAsState()
     val people by viewModel.people.observeAsState(listOf())
     val chapters by viewModel.chapters.observeAsState(listOf())
@@ -104,7 +107,9 @@ fun MovieDetails(
     val similar by viewModel.similar.observeAsState(listOf())
     val loading by viewModel.loading.observeAsState(LoadingState.Loading)
     val chosenStreams by viewModel.chosenStreams.observeAsState(null)
+    val resumeRefreshToken by viewModel.resumeRefreshToken.observeAsState(0)
     val discovered by viewModel.discovered.collectAsState()
+    val unknownTitle = stringResource(R.string.unknown)
 
     var overviewDialog by remember { mutableStateOf<ItemDetailsDialogInfo?>(null) }
     var moreDialog by remember { mutableStateOf<DialogParams?>(null) }
@@ -135,7 +140,7 @@ fun MovieDetails(
 
         LoadingState.Loading,
         LoadingState.Pending,
-        -> {
+            -> {
             LoadingPage(modifier)
         }
 
@@ -150,16 +155,18 @@ fun MovieDetails(
                         viewModel.release()
                     }
                 }
+
                 MovieDetailsContent(
                     preferences = preferences,
                     movie = movie,
                     chosenStreams = chosenStreams,
+                    resumeRefreshToken = resumeRefreshToken,
                     people = people,
                     chapters = chapters,
                     extras = extras,
                     trailers = trailers,
                     similar = similar,
-                    onClickItem = { index, item ->
+                    onClickItem = { _, item ->
                         viewModel.navigateTo(item.destination())
                     },
                     onClickPerson = {
@@ -181,7 +188,7 @@ fun MovieDetails(
                     overviewOnClick = {
                         overviewDialog =
                             ItemDetailsDialogInfo(
-                                title = movie.name ?: context.getString(R.string.unknown),
+                                title = movie.name ?: unknownTitle,
                                 overview = movie.data.overview,
                                 genres = movie.data.genres.orEmpty(),
                                 files = movie.data.mediaSources.orEmpty(),
@@ -217,7 +224,6 @@ fun MovieDetails(
                                             moreDialog = null
                                         },
                                         onChooseTracks = { type ->
-
                                             viewModel.streamChoiceService
                                                 .chooseSource(
                                                     movie.data,
@@ -248,9 +254,7 @@ fun MovieDetails(
                                         onShowOverview = {
                                             overviewDialog =
                                                 ItemDetailsDialogInfo(
-                                                    title =
-                                                        movie.name
-                                                            ?: context.getString(R.string.unknown),
+                                                    title = movie.name ?: unknownTitle,
                                                     overview = movie.data.overview,
                                                     genres = movie.data.genres.orEmpty(),
                                                     files = movie.data.mediaSources.orEmpty(),
@@ -268,7 +272,7 @@ fun MovieDetails(
                     favoriteOnClick = {
                         viewModel.setFavorite(movie.id, !movie.favorite)
                     },
-                    onLongClickPerson = { index, person ->
+                    onLongClickPerson = { _, person ->
                         val items =
                             buildMoreDialogItemsForPerson(
                                 context = context,
@@ -282,7 +286,7 @@ fun MovieDetails(
                                 items = items,
                             )
                     },
-                    onLongClickSimilar = { index, similar ->
+                    onLongClickSimilar = { _, similar ->
                         val items =
                             buildMoreDialogItemsForHome(
                                 context = context,
@@ -303,11 +307,11 @@ fun MovieDetails(
                     trailerOnClick = {
                         TrailerService.onClick(context, it, viewModel::navigateTo)
                     },
-                    onClickExtra = { index, extra ->
+                    onClickExtra = { _, extra ->
                         viewModel.navigateTo(extra.destination)
                     },
                     discovered = discovered,
-                    onClickDiscover = { index, item ->
+                    onClickDiscover = { _, item ->
                         viewModel.navigateTo(item.destination)
                     },
                     modifier = modifier,
@@ -377,6 +381,7 @@ fun MovieDetailsContent(
     preferences: UserPreferences,
     movie: BaseItem,
     chosenStreams: ChosenStreams?,
+    resumeRefreshToken: Int,
     people: List<Person>,
     chapters: List<Chapter>,
     trailers: List<Trailer>,
@@ -397,16 +402,22 @@ fun MovieDetailsContent(
     onClickDiscover: (Int, DiscoverItem) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var position by rememberInt(0)
     val focusRequesters = remember { List(DISCOVER_ROW + 1) { FocusRequester() } }
+    val playButtonFocusRequester = remember { FocusRequester() }
     val dto = movie.data
     val resumePosition = dto.userData?.playbackPositionTicks?.ticks ?: Duration.ZERO
 
     val bringIntoViewRequester = remember { BringIntoViewRequester() }
 
     RequestOrRestoreFocus(focusRequesters.getOrNull(position))
+    LaunchedEffect(resumeRefreshToken) {
+        if (resumeRefreshToken > 0) {
+            position = HEADER_ROW
+            playButtonFocusRequester.tryRequestFocusAfterLayout("movie_details:play_button", attempts = 6)
+        }
+    }
 
     Box(modifier = modifier) {
         LazyColumn(
@@ -444,6 +455,7 @@ fun MovieDetailsContent(
                         moreOnClick = moreOnClick,
                         watchOnClick = watchOnClick,
                         favoriteOnClick = favoriteOnClick,
+                        firstButtonFocusRequester = playButtonFocusRequester,
                         buttonOnFocusChanged = {
                             if (it.isFocused) {
                                 position = HEADER_ROW
@@ -538,7 +550,7 @@ fun MovieDetailsContent(
                             position = SIMILAR_ROW
                             onLongClickSimilar.invoke(index, similar)
                         },
-                        cardContent = { index, item, mod, onClick, onLongClick ->
+                        cardContent = { _, item, mod, onClick, onLongClick ->
                             SeasonCard(
                                 item = item,
                                 onClick = onClick,

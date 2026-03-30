@@ -30,6 +30,7 @@ import com.github.damontecres.wholphin.services.BackdropService
 import com.github.damontecres.wholphin.services.FavoriteWatchManager
 import com.github.damontecres.wholphin.services.MediaReportService
 import com.github.damontecres.wholphin.services.NavigationManager
+import com.github.damontecres.wholphin.services.WatchedEventBus
 import com.github.damontecres.wholphin.ui.data.AddPlaylistViewModel
 import com.github.damontecres.wholphin.ui.data.RowColumn
 import com.github.damontecres.wholphin.ui.detail.MoreDialogActions
@@ -61,6 +62,7 @@ abstract class RecommendedViewModel(
     val favoriteWatchManager: FavoriteWatchManager,
     val mediaReportService: MediaReportService,
     private val backdropService: BackdropService,
+    private val watchedEventBus: WatchedEventBus,
     val api: ApiClient,
     val serverRepository: ServerRepository,
 ) : ViewModel() {
@@ -70,6 +72,34 @@ abstract class RecommendedViewModel(
 
     val loading = MutableLiveData<LoadingState>(LoadingState.Loading)
 
+    // THE FIX: Allows the UI to read this variable, but keeps the ability to change it private
+    var hasInitialized = false
+        private set
+
+    init {
+        viewModelScope.launchIO {
+            watchedEventBus.events.collect { event ->
+                refreshItemInAllRows(event.itemId, null)
+            }
+        }
+    }
+
+    fun initOnce() {
+        if (!hasInitialized) {
+            hasInitialized = true
+            init()
+        }
+    }
+
+    // Called every ON_RESUME — refreshes only the watching rows surgically,
+    // exactly like HomeViewModel.refreshWatchingRows() does on the home page.
+    open fun refreshWatchingRows() {}
+    open fun refreshRecentRows() {}
+
+    open fun favoritesRowIndices(): List<Int> = emptyList()
+    open fun reloadFavoritesRows() {}
+
+    // Updates the clicked card at its specific position (handles ApiRequestPager rows)
     fun refreshItem(
         position: RowColumn,
         itemId: UUID,
@@ -78,39 +108,60 @@ abstract class RecommendedViewModel(
         viewModelScope.launchIO {
             val currentRowList = rows.value.toMutableList()
             val rowState = currentRowList.getOrNull(position.row)
-
             if (rowState is HomeRowLoadingState.Success) {
                 if (rowState.items is ApiRequestPager<*>) {
                     (rowState.items as ApiRequestPager<*>).refreshItem(position.column, itemId)
-                } else {
-                    val oldList = rowState.items.filterIsInstance<BaseItem>()
-                    if (oldList.isNotEmpty() && newFavoriteStatus != null) {
-                        val userId = serverRepository.currentUser.value?.id
-                        if (userId != null) {
-                            try {
-                                val freshItemDto = api.userLibraryApi.getItem(userId = userId, itemId = itemId).content
-                                val newList = oldList.map { item ->
-                                    if (item.id == itemId) {
-                                        freshItemDto.userData?.let { ud ->
-                                            try {
-                                                val field = ud::class.java.getDeclaredField("isFavorite")
-                                                field.isAccessible = true
-                                                field.set(ud, newFavoriteStatus)
-                                            } catch (e: Exception) { Timber.e(e) }
-                                        }
-                                        item.copy(data = freshItemDto)
-                                    } else {
-                                        item
-                                    }
-                                }
-                                currentRowList[position.row] = rowState.copy(items = newList)
-                                rows.update { currentRowList.toList() }
-                            } catch (e: Exception) {
-                                Timber.e(e, "Failed to fetch updated item from API")
-                            }
+                }
+            }
+        }
+    }
+
+    // Updates the item in EVERY row that contains it so hearts are consistent
+    // across all rows without re-randomizing anything
+    private fun refreshItemInAllRows(itemId: UUID, newFavoriteStatus: Boolean?) {
+        viewModelScope.launchIO {
+            val userId = serverRepository.currentUser.value?.id ?: return@launchIO
+            try {
+                val freshItemDto = api.userLibraryApi.getItem(userId = userId, itemId = itemId).content
+
+                if (newFavoriteStatus != null) {
+                    freshItemDto.userData?.let { ud ->
+                        try {
+                            val field = ud::class.java.getDeclaredField("isFavorite")
+                            field.isAccessible = true
+                            field.set(ud, newFavoriteStatus)
+                        } catch (e: Exception) {
+                            Timber.e(e, "Could not force favorite field")
                         }
                     }
                 }
+
+                rows.update { currentRows ->
+                    currentRows.map { row ->
+                        if (row is HomeRowLoadingState.Success && row.items !is ApiRequestPager<*>) {
+                            val oldList = row.items.filterIsInstance<BaseItem>()
+                            if (oldList.any { it.id == itemId }) {
+                                val newList = oldList.map { item ->
+                                    if (item.id == itemId) item.copy(data = freshItemDto) else item
+                                }
+                                val filteredList = if (newFavoriteStatus == false &&
+                                    favoritesRowIndices().contains(currentRows.indexOf(row))
+                                ) {
+                                    newList.filter { it.id != itemId }
+                                } else {
+                                    newList
+                                }
+                                row.copy(items = filteredList)
+                            } else {
+                                row
+                            }
+                        } else {
+                            row
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to refresh item $itemId across all rows")
             }
         }
     }
@@ -118,7 +169,8 @@ abstract class RecommendedViewModel(
     fun setWatched(position: RowColumn, itemId: UUID, watched: Boolean) {
         viewModelScope.launchIO {
             favoriteWatchManager.setWatched(itemId, watched)
-            init()
+            refreshItem(position, itemId, null)
+            refreshItemInAllRows(itemId, null)
         }
     }
 
@@ -126,12 +178,17 @@ abstract class RecommendedViewModel(
         viewModelScope.launchIO {
             favoriteWatchManager.setFavorite(itemId, favorite)
             refreshItem(position, itemId, favorite)
-            init()
+            refreshItemInAllRows(itemId, favorite)
+            reloadFavoritesRows()
         }
     }
 
     fun updateBackdrop(item: BaseItem) {
         viewModelScope.launchIO { backdropService.submit(item) }
+    }
+
+    fun hideBackdropImage() {
+        viewModelScope.launchIO { backdropService.hideBackdropImageKeepColors() }
     }
 
     abstract fun update(@StringRes title: Int, row: HomeRowLoadingState): HomeRowLoadingState
@@ -158,13 +215,20 @@ fun RecommendedContent(
     var showPlaylistDialog by remember { mutableStateOf<Optional<UUID>>(Optional.absent()) }
     val playlistState by playlistViewModel.playlistState.observeAsState(PlaylistLoadingState.Pending)
 
-    // THE FIX: Replaced OneTimeLaunchedEffect with a Lifecycle Observer
-    // This forces the page to silently reload 'Next Up' and 'Favorites' every time you return from the video player!
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                viewModel.init()
+                if (!viewModel.hasInitialized) {
+                    viewModel.initOnce()
+                } else {
+                    // FIX: On every resume after the first load, refresh only the
+                    // watching rows — exactly like HomeViewModel.refreshWatchingRows().
+                    // Previously this called initOnce() which has a hasInitialized guard
+                    // and silently did nothing on every resume after the first load.
+                    viewModel.refreshWatchingRows()
+                    viewModel.refreshRecentRows()
+                }
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -194,23 +258,61 @@ fun RecommendedContent(
                 val originalRowIndex = activeRowPairs.getOrNull(pos.row)?.first ?: pos.row
                 pos.copy(row = originalRowIndex)
             }
+            val displayPosition =
+                remember(activeRowPairs, position) {
+                    val activeRowIndex = activeRowPairs.indexOfFirst { it.first == position.row }
+                    if (activeRowIndex >= 0) {
+                        val items =
+                            (activeRowPairs[activeRowIndex].second as? HomeRowLoadingState.Success)
+                                ?.items
+                                .orEmpty()
+                        RowColumn(
+                            activeRowIndex,
+                            if (items.isEmpty()) {
+                                0
+                            } else {
+                                position.column.coerceIn(0, items.lastIndex)
+                            },
+                        )
+                    } else {
+                        val fallbackActiveIndex =
+                            activeRowPairs.indexOfFirst {
+                                val state = it.second as? HomeRowLoadingState.Success
+                                state?.items?.isNotEmpty() == true
+                            }
+                        if (fallbackActiveIndex >= 0) {
+                            RowColumn(fallbackActiveIndex, 0)
+                        } else {
+                            RowColumn(-1, -1)
+                        }
+                    }
+                }
 
             HomePageContent(
                 homeRows = activeRows,
-                position = position,
-                onClickItem = { _, item -> viewModel.navigationManager.navigateTo(item.destination()) },
+                position = displayPosition,
+                onClickItem = { pos, item ->
+                    position = mapPosition(pos)
+                    viewModel.navigationManager.navigateTo(item.destination())
+                },
                 onLongClickItem = { pos, item ->
+                    position = mapPosition(pos)
                     val mappedPos = mapPosition(pos)
                     val newFavoriteStatus = !item.favorite
                     viewModel.setFavorite(mappedPos, item.id, newFavoriteStatus)
                 },
-                onClickPlay = { _, item -> viewModel.navigationManager.navigateTo(Destination.Playback(item)) },
+                onClickPlay = { pos, item ->
+                    position = mapPosition(pos)
+                    viewModel.navigationManager.navigateTo(Destination.Playback(item))
+                },
                 onFocusPosition = { pos ->
-                    position = pos
-                    onFocusPosition?.invoke(mapPosition(pos))
+                    val mappedPos = mapPosition(pos)
+                    position = mappedPos
+                    onFocusPosition?.invoke(mappedPos)
                 },
                 showClock = preferences.appPreferences.interfacePreferences.showClock,
                 onUpdateBackdrop = viewModel::updateBackdrop,
+                onHideBackdropImage = viewModel::hideBackdropImage,
                 modifier = modifier,
             )
         }

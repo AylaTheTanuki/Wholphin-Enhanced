@@ -101,6 +101,7 @@ import org.jellyfin.sdk.model.api.BaseItemKind
 import org.jellyfin.sdk.model.api.ImageType
 import org.jellyfin.sdk.model.api.MediaSegmentDto
 import kotlinx.coroutines.flow.update
+import com.github.damontecres.wholphin.services.AdaptiveBitrateManager
 import org.jellyfin.sdk.model.api.MediaSegmentType
 import org.jellyfin.sdk.model.api.MediaStreamType
 import org.jellyfin.sdk.model.api.PlayMethod
@@ -144,6 +145,7 @@ constructor(
     private val userPreferencesService: UserPreferencesService,
     private val imageUrlService: ImageUrlService,
     val syncPlayManager: SyncPlayManager,
+    val adaptiveBitrateManager: AdaptiveBitrateManager,
     @Assisted private val destination: Destination,
 ) : ViewModel(),
     Player.Listener,
@@ -624,6 +626,30 @@ constructor(
             }
 
             val chapters = Chapter.fromDto(base, api)
+            // --- Adaptive Bitrate: measure speed and decide playback strategy ---
+            val fileBitrate = mediaSource.bitrate?.toLong()
+                ?: mediaSource.mediaStreams
+                    ?.filter { it.type == MediaStreamType.VIDEO || it.type == MediaStreamType.AUDIO }
+                    ?.sumOf { it.bitRate?.toLong() ?: 0L }
+                ?: 20_000_000L // Default assumption: 20 Mbps if unknown
+
+            val bitrateRecommendation = if (!forceTranscoding) {
+                adaptiveBitrateManager.measureAndRecommend(fileBitrate)
+            } else {
+                null
+            }
+
+            val adaptiveDirectPlay = bitrateRecommendation?.shouldDirectPlay ?: !forceTranscoding
+            val adaptiveBitrate = bitrateRecommendation?.recommendedBitrateBps
+
+            Timber.i(
+                "AdaptiveBitrate: file=%.2f Mbps, measured=%.2f Mbps, recommend=%.2f Mbps, directPlay=%s",
+                fileBitrate / 1_000_000.0,
+                (bitrateRecommendation?.measuredSpeedBps ?: 0) / 1_000_000.0,
+                (adaptiveBitrate ?: preferences.appPreferences.playbackPreferences.maxBitrate) / 1_000_000.0,
+                adaptiveDirectPlay,
+            )
+// --- End Adaptive Bitrate ---
             withContext(Dispatchers.Main) {
                 this@PlaybackViewModel.currentItemPlayback.value = itemPlaybackToUse
                 updateCurrentMedia {
@@ -645,8 +671,9 @@ constructor(
                     subtitleIndex,
                     if (positionMs > 0) positionMs else C.TIME_UNSET,
                     itemPlayback != null, // If it was passed in, then it was not queried from the database
-                    enableDirectPlay = !forceTranscoding,
-                    enableDirectStream = !forceTranscoding,
+                    enableDirectPlay = adaptiveDirectPlay,
+                    enableDirectStream = adaptiveDirectPlay,
+                    adaptiveMaxBitrate = adaptiveBitrate,
                 )
                 player.prepare()
                 player.play()
@@ -668,6 +695,7 @@ constructor(
         userInitiated: Boolean,
         enableDirectPlay: Boolean = !this.forceTranscoding,
         enableDirectStream: Boolean = !this.forceTranscoding,
+        adaptiveMaxBitrate: Long? = null,
     ) = withContext(Dispatchers.IO) {
         val itemId = item.id
 
@@ -689,9 +717,10 @@ constructor(
                     "enableDirectPlay=$enableDirectPlay, enableDirectStream=$enableDirectStream, positionMs=$positionMs",
         )
 
-        val maxBitrate =
-            preferences.appPreferences.playbackPreferences.maxBitrate
-                .takeIf { it > 0 } ?: AppPreference.DEFAULT_BITRATE
+        val maxBitrate = adaptiveMaxBitrate
+            ?: preferences.appPreferences.playbackPreferences.maxBitrate
+                .takeIf { it > 0 }
+            ?: AppPreference.DEFAULT_BITRATE
         val response by
         api.mediaInfoApi
             .getPostedPlaybackInfo(
@@ -1096,6 +1125,9 @@ constructor(
         newPosition: Player.PositionInfo,
         reason: Int
     ) {
+        if (reason == Player.DISCONTINUITY_REASON_SEEK) {
+            lastSeekTime = System.currentTimeMillis()
+        }
         if (syncCommandDepth == 0 &&
             reason == Player.DISCONTINUITY_REASON_SEEK &&
             syncPlayManager.state.value is SyncPlayState.InGroup
@@ -1104,7 +1136,59 @@ constructor(
         }
     }
 
+    // Track buffering for adaptive bitrate fallback
+    private var bufferStartTime: Long = 0L
+    private var bufferCount: Int = 0
+    private var lastBufferResetTime: Long = System.currentTimeMillis()
+    private var currentPlaybackBitrate: Long = 0L
+    private var fallbackAttempt: Int = 0
+    private var lastSeekTime: Long = 0L
+
     override fun onPlaybackStateChanged(playbackState: Int) {
+        // --- Adaptive Bitrate: detect buffering and fall back if needed ---
+        if (playbackState == Player.STATE_BUFFERING && player.playbackState != Player.STATE_IDLE) {
+            // Ignore buffering caused by seeking — not a connection quality issue
+            if (System.currentTimeMillis() - lastSeekTime < 9000) {
+                Timber.d("AdaptiveBitrate: Ignoring post-seek buffering")
+                return
+            }
+            if (bufferStartTime == 0L) {
+                bufferStartTime = System.currentTimeMillis()
+            }
+
+            // Reset buffer count if it's been more than 2 minutes since last buffer
+            val now = System.currentTimeMillis()
+            if (now - lastBufferResetTime > 120_000) {
+                bufferCount = 0
+            }
+
+            bufferCount++
+            lastBufferResetTime = now
+
+            Timber.d("AdaptiveBitrate: Buffering detected, count=%d", bufferCount)
+
+            // If we've buffered 3+ times, fall back to next lower tier
+            if (bufferCount >= 10) {
+                bufferCount = 0
+                val currentBitrate = currentPlaybackBitrate.takeIf { it > 0 }
+                    ?: currentPlayback.value?.mediaSourceInfo?.bitrate?.toLong()
+                    ?: 20_000_000L
+
+                fallbackAttempt++
+                val fallbackBitrate = adaptiveBitrateManager.getFallbackBitrate(currentBitrate, fallbackAttempt)
+                if (fallbackBitrate != null) {
+                    Timber.i("AdaptiveBitrate: Falling back to %.2f Mbps", fallbackBitrate / 1_000_000.0)
+                    val positionMs = player.currentPosition
+                    setBitrateAndReload(fallbackBitrate.toInt(), positionMs)
+                }
+            }
+        }
+
+        if (playbackState == Player.STATE_READY) {
+            bufferStartTime = 0L
+        }
+        // --- End Adaptive Bitrate buffering detection ---
+
         if (playbackState == Player.STATE_ENDED) {
             viewModelScope.launchIO {
                 val nextItem = playlist.value?.peek()
@@ -1330,7 +1414,7 @@ constructor(
         val isManualLimit = bitrate != null
 
         viewModelScope.launchIO {
-            val targetBitrate = bitrate?.toLong() ?: 120000000L
+            val targetBitrate = bitrate?.toLong() ?: AppPreference.DEFAULT_BITRATE
 
             // 1. Save to the Shield's storage
             userPreferencesService.update { current ->

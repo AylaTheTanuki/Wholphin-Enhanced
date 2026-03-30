@@ -5,6 +5,7 @@ package com.github.damontecres.wholphin.ui.playback
 import android.view.Gravity
 import androidx.annotation.DrawableRes
 import androidx.annotation.OptIn
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -122,6 +123,7 @@ sealed interface PlaybackAction {
 fun PlaybackControls(
     playerControls: Player,
     controllerViewState: ControllerViewState,
+    playbackModeLabel: String?,
     onPlaybackActionClick: (PlaybackAction) -> Unit,
     onClickPlaybackDialogType: (PlaybackDialogType) -> Unit,
     moreFocusRequester: FocusRequester,
@@ -181,6 +183,7 @@ fun PlaybackControls(
                     .fillMaxWidth(),
         ) {
             LeftPlaybackButtons(
+                playbackModeLabel = playbackModeLabel,
                 moreFocusRequester = moreFocusRequester,
                 onControllerInteraction = onControllerInteraction,
                 onClickPlaybackDialogType = onClickPlaybackDialogType,
@@ -298,6 +301,7 @@ private val buttonSpacing = 12.dp
 
 @Composable
 fun LeftPlaybackButtons(
+    playbackModeLabel: String?,
     moreFocusRequester: FocusRequester,
     onControllerInteraction: () -> Unit,
     onClickPlaybackDialogType: (PlaybackDialogType) -> Unit,
@@ -318,6 +322,20 @@ fun LeftPlaybackButtons(
             onControllerInteraction = onControllerInteraction,
             modifier = Modifier.focusRequester(moreFocusRequester),
         )
+        AnimatedVisibility(playbackModeLabel != null) {
+            Text(
+                text = playbackModeLabel.orEmpty(),
+                color = MaterialTheme.colorScheme.onSurface,
+                style = MaterialTheme.typography.labelLarge,
+                modifier =
+                    Modifier
+                        .align(Alignment.CenterVertically)
+                        .background(
+                            AppColors.TransparentBlack50,
+                            shape = RoundedCornerShape(8.dp),
+                        ).padding(horizontal = 12.dp, vertical = 8.dp),
+            )
+        }
     }
 }
 

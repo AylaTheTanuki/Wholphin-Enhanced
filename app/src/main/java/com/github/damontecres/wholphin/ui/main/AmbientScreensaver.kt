@@ -25,8 +25,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -143,17 +148,34 @@ fun AmbientScreensaver(
             }
         }
 
+        // Dark gradient along the bottom edge so the clock always reads cleanly
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(32.dp),
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            Color.Transparent,
+                            Color.Transparent,
+                            Color.Black.copy(alpha = 0.55f)
+                        )
+                    )
+                )
+        )
+
+        // Clock — bottom right, no background box, just a strong text shadow
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(end = 48.dp, bottom = 36.dp),
             contentAlignment = Alignment.BottomEnd
         ) {
             var timeText by remember { mutableStateOf("") }
 
             LaunchedEffect(Unit) {
                 while (isActive) {
-                    timeText = java.time.LocalTime.now().format(java.time.format.DateTimeFormatter.ofPattern("h:mm a"))
+                    timeText = java.time.LocalTime.now()
+                        .format(java.time.format.DateTimeFormatter.ofPattern("h:mm a"))
                     delay(1000)
                 }
             }
@@ -161,16 +183,13 @@ fun AmbientScreensaver(
             androidx.tv.material3.Text(
                 text = timeText,
                 color = Color.White,
-                fontSize = 32.sp,
-                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                // THE FIX: Increased padding and adjusted shadow properties.
-                // Padding 32.dp gives the blur plenty of space to avoid a hard stop clipping.
-                modifier = Modifier.padding(32.dp),
-                style = androidx.compose.ui.text.TextStyle(
-                    shadow = androidx.compose.ui.graphics.Shadow(
-                        color = Color.Black.copy(alpha = 0.8f),
-                        offset = androidx.compose.ui.geometry.Offset(2f, 2f),
-                        blurRadius = 40f // Significantly larger blur for a smooth, natural transition
+                fontSize = 48.sp,
+                fontWeight = FontWeight.Light,
+                style = TextStyle(
+                    shadow = Shadow(
+                        color = Color.Black.copy(alpha = 0.9f),
+                        offset = Offset(0f, 2f),
+                        blurRadius = 12f
                     )
                 )
             )

@@ -37,6 +37,7 @@ import kotlinx.coroutines.withContext
 import org.jellyfin.sdk.api.client.ApiClient
 import org.jellyfin.sdk.api.client.extensions.userLibraryApi
 import org.jellyfin.sdk.model.api.MediaStreamType
+import timber.log.Timber
 import java.util.UUID
 
 @HiltViewModel(assistedFactory = EpisodeViewModel.Factory::class)
@@ -64,6 +65,7 @@ class EpisodeViewModel
         val loading = MutableLiveData<LoadingState>(LoadingState.Pending)
         val item = MutableLiveData<BaseItem?>(null)
         val chosenStreams = MutableLiveData<ChosenStreams?>(null)
+        val resumeRefreshToken = MutableLiveData(0)
 
         init {
             init()
@@ -172,6 +174,34 @@ class EpisodeViewModel
                 themeSongPlayer.playThemeFor(seriesId, playThemeSongs)
                 addCloseable {
                     themeSongPlayer.stop()
+                }
+            }
+        }
+
+        fun onResumePage() {
+            viewModelScope.launchIO {
+                try {
+                    val updatedItem =
+                        api.userLibraryApi.getItem(itemId).content.let {
+                            BaseItem.from(it, api)
+                        }
+
+                    val result =
+                        itemPlaybackRepository.getSelectedTracks(
+                            updatedItem.id,
+                            updatedItem,
+                            userPreferencesService.getCurrent(),
+                        )
+
+                    withContext(Dispatchers.Main) {
+                        item.value = updatedItem
+                        chosenStreams.value = result
+                        loading.value = LoadingState.Success
+                        resumeRefreshToken.value = (resumeRefreshToken.value ?: 0) + 1
+                    }
+                    backdropService.submit(updatedItem)
+                } catch (e: Exception) {
+                    Timber.e(e, "onResumePage: failed to refresh episode $itemId")
                 }
             }
         }

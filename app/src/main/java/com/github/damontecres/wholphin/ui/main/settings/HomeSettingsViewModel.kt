@@ -114,6 +114,12 @@ class HomeSettingsViewModel
             }
         }
 
+        fun hideBackdropImage() {
+            viewModelScope.launchIO {
+                backdropService.hideBackdropImageKeepColors()
+            }
+        }
+
         private suspend fun fetchRowData() {
             val limit = 8
             val semaphore = Semaphore(4)
@@ -649,6 +655,7 @@ class HomeSettingsViewModel
                                 is NextUp -> it.config.updateViewOptions(preset.continueWatching)
                                 is ContinueWatchingCombined -> it.config.updateViewOptions(preset.continueWatching)
                                 is MyList -> it.config.updateViewOptions(preset.movieLibrary)
+                                is HomeRowConfig.MovieWatchHistory -> it.config.updateViewOptions(preset.movieLibrary)
                                 is HomeRowConfig.ByParent -> {
                                     val collectionType = getCollectionType(it.config.parentId)
                                     val viewOptions = preset.getByCollectionType(collectionType)

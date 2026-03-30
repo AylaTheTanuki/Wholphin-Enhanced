@@ -23,6 +23,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.onFocusChanged
@@ -205,6 +206,7 @@ fun SeerrDiscoverPage(
 
     val focusRequesters = remember(rows) { List(rows.size) { FocusRequester() } }
     var position by rememberPosition(0, -1)
+    var suppressTransientFocusUntilRestore by rememberSaveable { mutableStateOf(false) }
     val focusedItem =
         remember(position) {
             position.let {
@@ -270,7 +272,12 @@ fun SeerrDiscoverPage(
                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 40.dp),
                 modifier =
                     Modifier
-                        .focusRestorer()
+                        .focusProperties {
+                            onEnter = {
+                                focusRequesters.getOrNull(position.row)?.tryRequestFocus()
+                                    ?: focusRequesters.firstOrNull()?.tryRequestFocus()
+                            }
+                        }
                         .fillMaxSize(),
             ) {
                 itemsIndexed(rows) { rowIndex, row ->
@@ -278,11 +285,21 @@ fun SeerrDiscoverPage(
                         DiscoverRow(
                             row = row,
                             onClickItem = { index, item ->
+                                suppressTransientFocusUntilRestore = true
                                 position = RowColumn(rowIndex, index)
                                 viewModel.navigationManager.navigateTo(item.destination)
                             },
                             onLongClickItem = { index, item -> },
-                            onCardFocus = { index -> position = RowColumn(rowIndex, index) },
+                            onCardFocus = onCardFocus@{ index ->
+                                val newPosition = RowColumn(rowIndex, index)
+                                if (suppressTransientFocusUntilRestore) {
+                                    if (newPosition != position) {
+                                        return@onCardFocus
+                                    }
+                                    suppressTransientFocusUntilRestore = false
+                                }
+                                position = newPosition
+                            },
                             focusRequester = focusRequesters[rowIndex],
                             modifier =
                                 Modifier

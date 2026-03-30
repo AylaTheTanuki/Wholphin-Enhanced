@@ -64,6 +64,7 @@ import com.github.damontecres.wholphin.ui.TimeFormatter
 import com.github.damontecres.wholphin.ui.cards.ChapterCard
 import com.github.damontecres.wholphin.ui.cards.SeasonCard
 import com.github.damontecres.wholphin.ui.components.TimeDisplay
+import com.github.damontecres.wholphin.ui.formatBitrate
 import com.github.damontecres.wholphin.ui.ifElse
 import com.github.damontecres.wholphin.ui.isNotNullOrBlank
 import com.github.damontecres.wholphin.ui.tryRequestFocus
@@ -71,6 +72,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import org.jellyfin.sdk.model.api.ImageType
 import org.jellyfin.sdk.model.api.MediaSegmentDto
+import org.jellyfin.sdk.model.api.PlayMethod
 import org.jellyfin.sdk.model.api.TrickplayInfo
 import java.time.LocalTime
 import kotlin.time.Duration
@@ -79,6 +81,19 @@ import kotlin.time.Duration.Companion.seconds
 
 private val titleTextSize = 28.sp
 private val subtitleTextSize = 18.sp
+
+private fun playbackModeLabel(currentPlayback: CurrentPlayback?): String? {
+    if (currentPlayback == null) return null
+
+    return when (currentPlayback.playMethod) {
+        PlayMethod.DIRECT_PLAY -> "Direct Play"
+        PlayMethod.DIRECT_STREAM -> currentPlayback.mediaSourceInfo.bitrate?.toLong()?.let(::formatBitrate) ?: "0.0mbps"
+        PlayMethod.TRANSCODE -> {
+            val bitrate = currentPlayback.transcodeInfo?.bitrate?.toLong()
+            bitrate?.let(::formatBitrate) ?: "0.0mbps"
+        }
+    }
+}
 
 /**
  * The overlay during playback showing controls, seek preview image, debug info, etc
@@ -129,9 +144,9 @@ fun PlaybackOverlay(
             if (item?.subtitleLong.isNotNullOrBlank()) with(density) { subtitleTextSize.toDp() } else 0.dp
         }
 
-    // This will be calculated after composition
     var controllerHeight by remember { mutableStateOf(0.dp) }
     var state by remember { mutableStateOf(OverlayViewState.CONTROLLER) }
+    val playbackModeLabel = remember(currentPlayback) { playbackModeLabel(currentPlayback) }
 
     // Background scrim for OSD readability
     val scrimBrush =
@@ -191,6 +206,7 @@ fun PlaybackOverlay(
                     subtitle = item?.subtitleLong,
                     playerControls = playerControls,
                     controllerViewState = controllerViewState,
+                    playbackModeLabel = playbackModeLabel.takeIf { !showDebugInfo },
                     showPlay = showPlay,
                     showClock = showClock,
                     previousEnabled = previousEnabled,
@@ -514,6 +530,7 @@ fun Controller(
     title: String?,
     playerControls: Player,
     controllerViewState: ControllerViewState,
+    playbackModeLabel: String?,
     showClock: Boolean,
     showPlay: Boolean,
     previousEnabled: Boolean,
@@ -604,6 +621,7 @@ fun Controller(
             playerControls = playerControls,
             onPlaybackActionClick = onPlaybackActionClick,
             controllerViewState = controllerViewState,
+            playbackModeLabel = playbackModeLabel,
             onSeekProgress = {
                 onSeekProgress(it)
             },

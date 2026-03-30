@@ -19,12 +19,17 @@ import com.github.damontecres.wholphin.data.model.DiscoverItem
 import com.github.damontecres.wholphin.preferences.AppPreferences
 import com.github.damontecres.wholphin.preferences.BackdropStyle
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.FlowPreview
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.jellyfin.sdk.model.api.BaseItemKind
 import org.jellyfin.sdk.model.api.ImageType
@@ -33,7 +38,6 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
-@OptIn(FlowPreview::class)
 class BackdropService
     @Inject
     constructor(
@@ -41,7 +45,11 @@ class BackdropService
         private val imageUrlService: ImageUrlService,
         private val preferences: DataStore<AppPreferences>,
     ) {
+        private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        private val requestMutex = Mutex()
         private val extractedColorCache = LruCache<String, ExtractedColors>(50)
+        private var pendingRequest: BackdropRequest? = null
+        private var extractionJob: Job? = null
 
         private val _backdropFlow = MutableStateFlow<BackdropResult>(BackdropResult.NONE)
         val backdropFlow = _backdropFlow
@@ -52,7 +60,7 @@ class BackdropService
                     if (item.type == BaseItemKind.GENRE) {
                         item.imageUrlOverride
                     } else {
-                        imageUrlService.getItemImageUrl(item, ImageType.BACKDROP)!!
+                        imageUrlService.getItemImageUrl(item, ImageType.BACKDROP)
                     }
                 submit(item.id.toString(), imageUrl)
             }
@@ -63,28 +71,58 @@ class BackdropService
             itemId: String,
             imageUrl: String?,
         ) = withContext(Dispatchers.IO) {
-            if (backdropFlow.firstOrNull()?.imageUrl != imageUrl) {
-                _backdropFlow.update {
-                    it.copy(
-                        itemId = itemId,
-                        imageUrl = null,
-                    )
+            val request = BackdropRequest(itemId, imageUrl)
+            requestMutex.withLock {
+                val displayedBackdrop = _backdropFlow.value
+                if (pendingRequest == request ||
+                    (displayedBackdrop.itemId == itemId && displayedBackdrop.imageUrl == imageUrl)
+                ) {
+                    return@withLock
                 }
-                extractColors(itemId, imageUrl)
+
+                pendingRequest = request
+                extractionJob?.cancel()
+
+                if (request.imageUrl.isNullOrBlank()) {
+                    extractionJob = null
+                    _backdropFlow.value =
+                        BackdropResult(
+                            itemId = request.itemId,
+                            imageUrl = null,
+                        )
+                    return@withLock
+                }
+
+                extractionJob =
+                    scope.launch {
+                        applyBackdropRequest(request)
+                    }
             }
         }
 
         suspend fun clearBackdrop() {
-            _backdropFlow.update {
-                BackdropResult.NONE
+            requestMutex.withLock {
+                pendingRequest = null
+                extractionJob?.cancel()
+                extractionJob = null
+                _backdropFlow.value = BackdropResult.NONE
             }
         }
 
-        private suspend fun extractColors(
-            itemId: String,
-            imageUrl: String?,
-        ) {
-            delay(500)
+        suspend fun hideBackdropImageKeepColors() {
+            requestMutex.withLock {
+                pendingRequest = null
+                extractionJob?.cancel()
+                extractionJob = null
+
+                val currentBackdrop = _backdropFlow.value
+                if (currentBackdrop.imageUrl != null) {
+                    _backdropFlow.value = currentBackdrop.copy(imageUrl = null)
+                }
+            }
+        }
+
+        private suspend fun applyBackdropRequest(request: BackdropRequest) {
             val backdropStyle =
                 preferences.data
                     .firstOrNull()
@@ -95,21 +133,21 @@ class BackdropService
                     backdropStyle == BackdropStyle.UNRECOGNIZED
             val (primaryColor, secondaryColor, tertiaryColor) =
                 if (dynamicEnabled) {
-                    extractColorsFromBackdrop(imageUrl)
+                    extractColorsFromBackdrop(request.imageUrl)
                 } else {
                     ExtractedColors.DEFAULT
                 }
-            _backdropFlow.update {
-                if (it.itemId == itemId) {
-                    BackdropResult(
-                        itemId = itemId,
-                        imageUrl = imageUrl,
-                        primaryColor = primaryColor,
-                        secondaryColor = secondaryColor,
-                        tertiaryColor = tertiaryColor,
-                    )
-                } else {
-                    it
+            requestMutex.withLock {
+                if (pendingRequest == request) {
+                    _backdropFlow.value =
+                        BackdropResult(
+                            itemId = request.itemId,
+                            imageUrl = request.imageUrl,
+                            primaryColor = primaryColor,
+                            secondaryColor = secondaryColor,
+                            tertiaryColor = tertiaryColor,
+                        )
+                    extractionJob = null
                 }
             }
         }
@@ -129,6 +167,7 @@ class BackdropService
                         ImageRequest
                             .Builder(context)
                             .data(imageUrl)
+                            .size(BACKDROP_SAMPLE_WIDTH_PX, BACKDROP_SAMPLE_HEIGHT_PX)
                             .allowHardware(false)
                             .bitmapConfig(Bitmap.Config.ARGB_8888)
                             .build()
@@ -143,6 +182,8 @@ class BackdropService
                     } else {
                         ExtractedColors.DEFAULT
                     }
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (e: Exception) {
                     Timber.e(e, "Error extracting colors from URL: $imageUrl")
                     ExtractedColors.DEFAULT
@@ -223,6 +264,14 @@ class BackdropService
             extractedColorCache.evictAll()
         }
     }
+
+private data class BackdropRequest(
+    val itemId: String,
+    val imageUrl: String?,
+)
+
+private const val BACKDROP_SAMPLE_WIDTH_PX = 256
+private const val BACKDROP_SAMPLE_HEIGHT_PX = 144
 
 data class BackdropResult(
     val itemId: String?,

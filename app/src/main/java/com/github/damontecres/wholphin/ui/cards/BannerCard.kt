@@ -1,6 +1,7 @@
 package com.github.damontecres.wholphin.ui.cards
 
-import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
@@ -19,6 +20,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -26,6 +28,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -47,7 +50,12 @@ import com.github.damontecres.wholphin.ui.Cards
 import com.github.damontecres.wholphin.ui.FontAwesome
 import com.github.damontecres.wholphin.ui.LocalImageUrlService
 import com.github.damontecres.wholphin.ui.enableMarquee
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.draw.scale
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import org.jellyfin.sdk.model.api.ImageType
+import kotlin.math.roundToInt
 
 /**
  * Displays an image as a card. If no image is available, the name will be shown instead
@@ -69,7 +77,20 @@ fun BannerCard(
     imageType: ImageType = ImageType.PRIMARY,
     imageContentScale: ContentScale = ContentScale.FillBounds,
 ) {
+    val resolvedInteractionSource = interactionSource ?: remember { MutableInteractionSource() }
+    val clickScope = rememberCoroutineScope()
+    var clickAnimating by remember { mutableStateOf(false) }
+    val animatedScale by animateFloatAsState(
+        targetValue =
+            when {
+                clickAnimating -> 0.90f
+                else -> 1f
+            },
+        animationSpec = tween(durationMillis = 90),
+        label = "bannerCardScale",
+    )
     val imageUrlService = LocalImageUrlService.current
+    val context = LocalContext.current
     val density = LocalDensity.current
     val fillHeight =
         remember(cardHeight) {
@@ -80,6 +101,10 @@ fun BannerCard(
             } else {
                 null
             }
+        }
+    val widthPx =
+        remember(fillHeight, aspectRatio) {
+            fillHeight?.let { (it * aspectRatio).roundToInt().coerceAtLeast(1) }
         }
     val imageUrl =
         remember(item, fillHeight, imageType) {
@@ -95,16 +120,49 @@ fun BannerCard(
                 null
             }
         }
+    val imageRequest =
+        remember(context, imageUrl, widthPx, fillHeight) {
+            imageUrl?.let {
+                buildCardImageRequest(
+                    context = context,
+                    imageUrl = it,
+                    widthPx = widthPx,
+                    heightPx = fillHeight,
+                )
+            }
+        }
     var imageError by remember(imageUrl) { mutableStateOf(false) }
     Card(
-        modifier = modifier.size(cardHeight * aspectRatio, cardHeight),
-        onClick = onClick,
+        modifier = modifier
+            .size(cardHeight * aspectRatio, cardHeight)
+            .scale(animatedScale)
+            .onKeyEvent { event ->
+                if ((event.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_CENTER ||
+                            event.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_ENTER) &&
+                    event.nativeKeyEvent.action == android.view.KeyEvent.ACTION_UP &&
+                    event.nativeKeyEvent.eventTime - event.nativeKeyEvent.downTime > 500
+                ) {
+                    true
+                } else {
+                    false
+                }
+            },
+        onClick = {
+            if (clickAnimating) return@Card
+            clickAnimating = true
+            clickScope.launch {
+                delay(65)
+                onClick()
+                clickAnimating = false
+            }
+        },
         onLongClick = onLongClick,
-        interactionSource = interactionSource,
+        interactionSource = resolvedInteractionSource,
         colors =
             CardDefaults.colors(
 //                containerColor = Color.Transparent,
             ),
+        scale = CardDefaults.scale(focusedScale = 1f),
     ) {
         Box(
             modifier =
@@ -114,7 +172,7 @@ fun BannerCard(
         ) {
             if (!imageError && imageUrl != null) {
                 AsyncImage(
-                    model = imageUrl,
+                    model = imageRequest,
                     contentDescription = null,
                     contentScale = imageContentScale,
                     onError = { imageError = true },
@@ -209,14 +267,11 @@ fun BannerCardWithTitle(
     imageType: ImageType = ImageType.PRIMARY,
     imageContentScale: ContentScale = ContentScale.FillBounds,
 ) {
-    val focused by interactionSource.collectIsFocusedAsState()
-    val spaceBetween by animateDpAsState(if (focused) 12.dp else 4.dp)
-    val spaceBelow by animateDpAsState(if (focused) 4.dp else 12.dp)
     val focusedAfterDelay by rememberFocusedAfterDelay(interactionSource)
     val aspectRationToUse = aspectRatio.coerceAtLeast(AspectRatios.MIN)
     val width = cardHeight * aspectRationToUse
     Column(
-        verticalArrangement = Arrangement.spacedBy(spaceBetween),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
         modifier = modifier.width(width),
     ) {
         BannerCard(
@@ -239,7 +294,7 @@ fun BannerCardWithTitle(
             verticalArrangement = Arrangement.spacedBy(0.dp),
             modifier =
                 Modifier
-                    .padding(bottom = spaceBelow)
+                    .padding(bottom = 8.dp)
                     .fillMaxWidth(),
         ) {
             Text(

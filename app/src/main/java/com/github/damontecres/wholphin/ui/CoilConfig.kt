@@ -54,7 +54,11 @@ fun CoilConfig(
             .Builder(ctx)
             .apply {
                 if (enableCache) {
-                    memoryCache(MemoryCache.Builder().maxSizePercent(ctx).build())
+                    memoryCache(
+                        MemoryCache.Builder()
+                            .maxSizePercent(ctx, 0.20)
+                            .build()
+                    )
                     diskCache(
                         DiskCache
                             .Builder()
@@ -67,12 +71,23 @@ fun CoilConfig(
                     diskCache(null)
                 }
             }.crossfade(false)
+            .memoryCachePolicy(coil3.request.CachePolicy.ENABLED)
+            .diskCachePolicy(coil3.request.CachePolicy.ENABLED)
             .logger(if (debugLogging) DebugLogger() else null)
             .components {
                 add(
                     OkHttpNetworkFetcherFactory(
                         cacheStrategy = { WholphinCacheStrategy(CacheControlCacheStrategy()) },
-                        callFactory = { client },
+                        callFactory = {
+                            client.newBuilder()
+                                .dispatcher(
+                                    okhttp3.Dispatcher().apply {
+                                        maxRequests = 6
+                                        maxRequestsPerHost = 3
+                                    }
+                                )
+                                .build()
+                        },
                     ),
                 )
             }.build()
@@ -94,7 +109,10 @@ private class WholphinCacheStrategy(
         networkRequest: NetworkRequest,
         options: Options,
     ): CacheStrategy.ReadResult =
-        if (networkRequest.url.contains("/Trickplay/")) {
+        if (networkRequest.url.contains("/Trickplay/") ||
+            networkRequest.url.contains("/Images/") ||
+            networkRequest.url.contains("/UserImage")
+        ) {
             CacheStrategy.ReadResult(cacheResponse)
         } else {
             delegate.read(cacheResponse, networkRequest, options)

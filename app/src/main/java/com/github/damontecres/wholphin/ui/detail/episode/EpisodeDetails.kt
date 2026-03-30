@@ -11,6 +11,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.livedata.observeAsState
 import androidx.compose.runtime.mutableStateOf
@@ -47,6 +48,7 @@ import com.github.damontecres.wholphin.ui.detail.PlaylistLoadingState
 import com.github.damontecres.wholphin.ui.detail.buildMoreDialogItems
 import com.github.damontecres.wholphin.ui.nav.Destination
 import com.github.damontecres.wholphin.ui.rememberInt
+import com.github.damontecres.wholphin.ui.tryRequestFocusAfterLayout
 import com.github.damontecres.wholphin.util.ExceptionHandler
 import com.github.damontecres.wholphin.util.LoadingState
 import kotlinx.coroutines.launch
@@ -71,12 +73,13 @@ fun EpisodeDetails(
 ) {
     val context = LocalContext.current
     LifecycleResumeEffect(Unit) {
-        viewModel.init()
+        viewModel.onResumePage()
         onPauseOrDispose { }
     }
     val item by viewModel.item.observeAsState()
     val loading by viewModel.loading.observeAsState(LoadingState.Loading)
     val chosenStreams by viewModel.chosenStreams.observeAsState(null)
+    val resumeRefreshToken by viewModel.resumeRefreshToken.observeAsState(0)
 
     var overviewDialog by remember { mutableStateOf<ItemDetailsDialogInfo?>(null) }
     var moreDialog by remember { mutableStateOf<DialogParams?>(null) }
@@ -126,6 +129,7 @@ fun EpisodeDetails(
                     preferences = preferences,
                     ep = ep,
                     chosenStreams = chosenStreams,
+                    resumeRefreshToken = resumeRefreshToken,
                     playOnClick = {
                         viewModel.navigateTo(
                             Destination.Playback(
@@ -285,6 +289,7 @@ fun EpisodeDetailsContent(
     preferences: UserPreferences,
     ep: BaseItem,
     chosenStreams: ChosenStreams?,
+    resumeRefreshToken: Int,
     playOnClick: (Duration) -> Unit,
     overviewOnClick: () -> Unit,
     watchOnClick: () -> Unit,
@@ -296,11 +301,18 @@ fun EpisodeDetailsContent(
     val scope = rememberCoroutineScope()
     var position by rememberInt(0)
     val focusRequesters = remember { List(1) { FocusRequester() } }
+    val playButtonFocusRequester = remember { FocusRequester() }
     val dto = ep.data
     val resumePosition = dto.userData?.playbackPositionTicks?.ticks ?: Duration.ZERO
 
     val bringIntoViewRequester = remember { BringIntoViewRequester() }
     RequestOrRestoreFocus(focusRequesters.getOrNull(position))
+    LaunchedEffect(resumeRefreshToken) {
+        if (resumeRefreshToken > 0) {
+            position = HEADER_ROW
+            playButtonFocusRequester.tryRequestFocusAfterLayout("episode_details:play_button", attempts = 6)
+        }
+    }
     Box(modifier = modifier) {
         LazyColumn(
             verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -337,6 +349,7 @@ fun EpisodeDetailsContent(
                         moreOnClick = moreOnClick,
                         watchOnClick = watchOnClick,
                         favoriteOnClick = favoriteOnClick,
+                        firstButtonFocusRequester = playButtonFocusRequester,
                         buttonOnFocusChanged = {
                             if (it.isFocused) {
                                 position = HEADER_ROW

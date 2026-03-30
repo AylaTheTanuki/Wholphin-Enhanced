@@ -1,28 +1,36 @@
 package com.github.damontecres.wholphin.ui.main
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.livedata.observeAsState
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.onFocusChanged
@@ -38,15 +46,20 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.asFlow
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.viewModelScope
+import androidx.tv.material3.ListItem
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.github.damontecres.wholphin.R
+import com.github.damontecres.wholphin.data.SearchHistoryDao
+import com.github.damontecres.wholphin.data.ServerRepository
 import com.github.damontecres.wholphin.data.model.BaseItem
 import com.github.damontecres.wholphin.data.model.DiscoverItem
+import com.github.damontecres.wholphin.data.model.SearchHistoryEntry
 import com.github.damontecres.wholphin.data.model.SeerrItemType
 import com.github.damontecres.wholphin.preferences.UserPreferences
 import com.github.damontecres.wholphin.services.NavigationManager
@@ -74,6 +87,9 @@ import com.github.damontecres.wholphin.util.GetItemsRequestHandler
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -91,6 +107,8 @@ class SearchViewModel
         val navigationManager: NavigationManager,
         private val seerrService: SeerrService,
         val voiceInputManager: VoiceInputManager,
+        private val searchHistoryDao: SearchHistoryDao,
+        private val serverRepository: ServerRepository,
     ) : ViewModel() {
         val voiceState = voiceInputManager.state
         val soundLevel = voiceInputManager.soundLevel
@@ -101,6 +119,8 @@ class SearchViewModel
         val episodes = MutableLiveData<SearchResult>(SearchResult.NoQuery)
         val collections = MutableLiveData<SearchResult>(SearchResult.NoQuery)
         val seerrResults = MutableLiveData<SearchResult>(SearchResult.NoQuery)
+        private val _recentSearches = MutableStateFlow<List<String>>(emptyList())
+        val recentSearches: StateFlow<List<String>> = _recentSearches
 
         private var currentQuery: String? = null
 
@@ -174,11 +194,39 @@ class SearchViewModel
 
         init {
             addCloseable(voiceInputManager)
+            viewModelScope.launchIO {
+                serverRepository.currentUser.asFlow().collectLatest { user ->
+                    if (user == null) {
+                        _recentSearches.value = emptyList()
+                    } else {
+                        searchHistoryDao.observeRecentSearches(user.rowId).collect { entries ->
+                            _recentSearches.value = entries.map(SearchHistoryEntry::query)
+                        }
+                    }
+                }
+            }
         }
 
         fun getHints(query: String) {
             // TODO
 //        api.searchApi.getSearchHints()
+        }
+
+        fun saveRecentSearch(query: String) {
+            val normalized = query.trim()
+            if (normalized.isBlank()) return
+
+            viewModelScope.launchIO {
+                val userId = serverRepository.currentUser.value?.rowId ?: return@launchIO
+                searchHistoryDao.upsert(
+                    SearchHistoryEntry(
+                        userId = userId,
+                        query = normalized,
+                        updatedAt = System.currentTimeMillis(),
+                    ),
+                )
+                searchHistoryDao.trimRecentSearches(userId)
+            }
         }
     }
 
@@ -224,6 +272,7 @@ fun SearchPage(
     val series by viewModel.series.observeAsState(SearchResult.NoQuery)
     val episodes by viewModel.episodes.observeAsState(SearchResult.NoQuery)
     val seerrResults by viewModel.seerrResults.observeAsState(SearchResult.NoQuery)
+    val recentSearches by viewModel.recentSearches.collectAsState()
 
 //    val query = rememberTextFieldState()
     var query by rememberSaveable { mutableStateOf("") }
@@ -232,17 +281,23 @@ fun SearchPage(
     var position by rememberPosition(0, 0)
     var searchClicked by rememberSaveable { mutableStateOf(false) }
     var immediateSearchQuery by rememberSaveable { mutableStateOf<String?>(null) }
+    val fallbackFocusRequester =
+        focusRequesters.getOrNull(position.row)?.takeIf { position.row >= 0 } ?: focusRequesters[SEARCH_ROW]
 
     LifecycleResumeEffect(Unit) {
         onPauseOrDispose {
             viewModel.voiceInputManager.stopListening()
+            keyboardController?.hide()
+            focusManager.clearFocus(force = true)
         }
     }
 
     fun triggerImmediateSearch(searchQuery: String) {
-        immediateSearchQuery = searchQuery
+        val normalizedQuery = searchQuery.trim()
+        immediateSearchQuery = normalizedQuery
         searchClicked = true
-        viewModel.search(searchQuery)
+        viewModel.saveRecentSearch(normalizedQuery)
+        viewModel.search(normalizedQuery)
     }
 
     LaunchedEffect(query) {
@@ -261,6 +316,8 @@ fun SearchPage(
         focusRequesters.getOrNull(position.row)?.tryRequestFocus()
     }
     val onClickItem = { index: Int, item: BaseItem ->
+        keyboardController?.hide()
+        focusManager.clearFocus(force = true)
         viewModel.navigationManager.navigateTo(item.destination())
     }
 
@@ -287,7 +344,14 @@ fun SearchPage(
     LazyColumn(
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 44.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
-        modifier = modifier.focusGroup(),
+        modifier =
+            modifier
+                .focusGroup()
+                .focusProperties {
+                    onEnter = {
+                        fallbackFocusRequester.tryRequestFocus()
+                    }
+                },
     ) {
         item {
             Box(
@@ -296,9 +360,30 @@ fun SearchPage(
             ) {
                 var isSearchActive by remember { mutableStateOf(false) }
                 var isTextFieldFocused by remember { mutableStateOf(false) }
+                var focusedRecentSearchIndex by remember { mutableIntStateOf(-1) }
                 val textFieldFocusRequester = remember { FocusRequester() }
+                val searchActivationScope = rememberCoroutineScope()
+                val recentSearchFocusRequesters =
+                    remember(recentSearches.size) {
+                        List(recentSearches.size) { FocusRequester() }
+                    }
+                val showRecentSearches =
+                    recentSearches.isNotEmpty() &&
+                        !isSearchActive &&
+                        (isTextFieldFocused || focusedRecentSearchIndex >= 0)
 
-                BackHandler(isTextFieldFocused) {
+                fun activateSearch() {
+                    isSearchActive = true
+                    focusedRecentSearchIndex = -1
+                    searchActivationScope.launch {
+                        textFieldFocusRequester.tryRequestFocus()
+                        withFrameNanos { }
+                        textFieldFocusRequester.tryRequestFocus()
+                        keyboardController?.show()
+                    }
+                }
+
+                BackHandler(isTextFieldFocused || focusedRecentSearchIndex >= 0) {
                     when {
                         isSearchActive -> {
                             isSearchActive = false
@@ -306,6 +391,7 @@ fun SearchPage(
                         }
 
                         else -> {
+                            focusedRecentSearchIndex = -1
                             focusManager.moveFocus(FocusDirection.Next)
                         }
                     }
@@ -313,11 +399,15 @@ fun SearchPage(
 
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+                    verticalAlignment = Alignment.Top,
                     modifier =
                         Modifier
                             .focusGroup()
-                            .focusRestorer(textFieldFocusRequester)
+                            .focusRestorer(
+                                recentSearchFocusRequesters.getOrNull(
+                                    focusedRecentSearchIndex.coerceAtLeast(0),
+                                ) ?: textFieldFocusRequester,
+                            )
                             .focusRequester(focusRequesters[SEARCH_ROW]),
                 ) {
                     VoiceSearchButton(
@@ -328,32 +418,102 @@ fun SearchPage(
                         voiceInputManager = viewModel.voiceInputManager,
                     )
 
-                    SearchEditTextBox(
-                        value = query,
-                        onValueChange = {
-                            isSearchActive = true
-                            query = it
-                        },
-                        onSearchClick = { triggerImmediateSearch(query) },
-                        readOnly = !isSearchActive,
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
                         modifier =
                             Modifier
-                                .focusRequester(textFieldFocusRequester)
-                                .onFocusChanged { state ->
-                                    isTextFieldFocused = state.isFocused
-                                    if (!state.isFocused) isSearchActive = false
-                                }.onPreviewKeyEvent { event ->
-                                    val isActivationKey =
-                                        event.key in listOf(Key.DirectionCenter, Key.Enter)
-                                    if (event.type == KeyEventType.KeyUp && isActivationKey && !isSearchActive) {
-                                        isSearchActive = true
-                                        keyboardController?.show()
-                                        true
-                                    } else {
-                                        false
-                                    }
-                                },
-                    )
+                                .widthIn(min = 280.dp, max = 520.dp)
+                                .fillMaxWidth(),
+                    ) {
+                        SearchEditTextBox(
+                            value = query,
+                            onValueChange = {
+                                isSearchActive = true
+                                focusedRecentSearchIndex = -1
+                                query = it
+                            },
+                            onSearchClick = { triggerImmediateSearch(query) },
+                            readOnly = !isSearchActive,
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .focusRequester(textFieldFocusRequester)
+                                    .onFocusChanged { state ->
+                                        isTextFieldFocused = state.isFocused
+                                        if (!state.isFocused && focusedRecentSearchIndex < 0) {
+                                            isSearchActive = false
+                                        }
+                                    }.onPreviewKeyEvent { event ->
+                                        val isActivationKey =
+                                            event.key in listOf(Key.DirectionCenter, Key.Enter)
+                                        when {
+                                            event.type == KeyEventType.KeyUp && isActivationKey && !isSearchActive -> {
+                                                activateSearch()
+                                                true
+                                            }
+
+                                            event.type == KeyEventType.KeyUp &&
+                                                event.key == Key.DirectionDown &&
+                                                showRecentSearches -> {
+                                                focusedRecentSearchIndex = 0
+                                                recentSearchFocusRequesters.firstOrNull()?.tryRequestFocus()
+                                                true
+                                            }
+
+                                            else -> false
+                                        }
+                                    },
+                        )
+
+                        AnimatedVisibility(showRecentSearches) {
+                            Column(
+                                modifier =
+                                    Modifier
+                                        .fillMaxWidth(),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                recentSearches.take(2).forEachIndexed { index, recentQuery ->
+                                    ListItem(
+                                        selected = false,
+                                        onClick = {
+                                            focusedRecentSearchIndex = -1
+                                            query = recentQuery
+                                            triggerImmediateSearch(recentQuery)
+                                        },
+                                        headlineContent = {
+                                            Text(recentQuery)
+                                        },
+                                        supportingContent = {
+                                            Text(stringResource(R.string.search))
+                                        },
+                                        modifier =
+                                            Modifier
+                                                .fillMaxWidth()
+                                                .focusRequester(recentSearchFocusRequesters[index])
+                                                .onFocusChanged { state ->
+                                                    if (state.isFocused) {
+                                                        focusedRecentSearchIndex = index
+                                                        isSearchActive = false
+                                                    } else if (focusedRecentSearchIndex == index) {
+                                                        focusedRecentSearchIndex = -1
+                                                    }
+                                                }.onPreviewKeyEvent { event ->
+                                                    if (
+                                                        index == 0 &&
+                                                        event.type == KeyEventType.KeyUp &&
+                                                        event.key == Key.DirectionUp
+                                                    ) {
+                                                        textFieldFocusRequester.tryRequestFocus()
+                                                        true
+                                                    } else {
+                                                        false
+                                                    }
+                                                },
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -428,6 +588,8 @@ fun SearchPage(
                     } else {
                         Destination.DiscoveredItem(item)
                     }
+                keyboardController?.hide()
+                focusManager.clearFocus(force = true)
                 viewModel.navigationManager.navigateTo(dest)
             },
             onClickPosition = { position = it },

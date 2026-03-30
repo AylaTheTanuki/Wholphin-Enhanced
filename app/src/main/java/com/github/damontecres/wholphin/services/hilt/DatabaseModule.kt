@@ -13,6 +13,7 @@ import com.github.damontecres.wholphin.data.LibraryDisplayInfoDao
 import com.github.damontecres.wholphin.data.Migrations
 import com.github.damontecres.wholphin.data.PlaybackEffectDao
 import com.github.damontecres.wholphin.data.PlaybackLanguageChoiceDao
+import com.github.damontecres.wholphin.data.SearchHistoryDao
 import com.github.damontecres.wholphin.data.SeerrServerDao
 import com.github.damontecres.wholphin.data.ServerPreferencesDao
 import com.github.damontecres.wholphin.preferences.AppPreferences
@@ -70,6 +71,10 @@ object DatabaseModule {
     @Provides
     @Singleton
     fun playbackEffectDao(db: AppDatabase): PlaybackEffectDao = db.playbackEffectDao()
+
+    @Provides
+    @Singleton
+    fun searchHistoryDao(db: AppDatabase): SearchHistoryDao = db.searchHistoryDao()
 
     @Provides
     @Singleton

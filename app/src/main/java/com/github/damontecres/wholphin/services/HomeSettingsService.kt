@@ -27,6 +27,8 @@ import com.github.damontecres.wholphin.util.HomeRowLoadingState
 import com.github.damontecres.wholphin.util.HomeRowLoadingState.Success
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.serialization.ExperimentalSerializationApi
@@ -107,7 +109,6 @@ class HomeSettingsService @Inject constructor(
         val current = api.displayPreferencesApi.getDisplayPreferences(displayPreferencesId, userId, context.getString(R.string.app_name)).content
         val customPrefs = current.customPrefs.toMutableMap()
         customPrefs[CUSTOM_PREF_ID] = jsonParser.encodeToString(HomePageSettings.serializer(), settings)
-
         api.displayPreferencesApi.updateDisplayPreferences(
             displayPreferencesId = displayPreferencesId,
             userId = userId,
@@ -145,12 +146,14 @@ class HomeSettingsService @Inject constructor(
 
     suspend fun loadCurrentSettings(userId: UUID) {
         val settings = try { loadFromLocal(userId) } catch (_: Exception) { null } ?: try { loadFromServer(userId) } catch (_: Exception) { null }
-        val resolvedRows = (settings?.rows ?: createDefault(userId).rows.map { it.config }).mapIndexed { index, config -> resolve(index, config) }
+        val rowConfigs = ensureMovieWatchHistoryRow(settings?.rows ?: createDefault(userId).rows.map { it.config })
+        val resolvedRows = rowConfigs.mapIndexed { index, config -> resolve(index, config) }
         currentSettings.update { HomePageResolvedSettings(resolvedRows) }
     }
 
     suspend fun updateCurrent(settings: HomePageSettings) {
-        currentSettings.update { HomePageResolvedSettings(settings.rows.mapIndexed { index, config -> resolve(index, config) }) }
+        val rows = ensureMovieWatchHistoryRow(settings.rows)
+        currentSettings.update { HomePageResolvedSettings(rows.mapIndexed { index, config -> resolve(index, config) }) }
     }
 
     suspend fun createDefault(userId: UUID): HomePageResolvedSettings {
@@ -169,7 +172,25 @@ class HomeSettingsService @Inject constructor(
             HomeRowConfigDisplay(includedIds.size + 2, context.getString(R.string.next_up), HomeRowConfig.NextUp(viewOptions = nextUpOptions))
         )
 
-        return HomePageResolvedSettings(continueRows + HomeRowConfigDisplay(includedIds.size + 3, context.getString(R.string.favorites), HomeRowConfig.MyList()) + includedIds)
+        val rows =
+            (continueRows +
+                HomeRowConfigDisplay(includedIds.size + 3, context.getString(R.string.favorites), HomeRowConfig.MyList()) +
+                includedIds)
+                .toMutableList()
+
+        if (rows.none { it.config is HomeRowConfig.MovieWatchHistory }) {
+            val insertIndex = rows.indexOfLast { it.config is HomeRowConfig.RecentlyAdded }.let { if (it >= 0) it + 1 else rows.size }
+            rows.add(
+                insertIndex,
+                HomeRowConfigDisplay(
+                    rows.size + 1,
+                    context.getString(R.string.movie_watch_history),
+                    HomeRowConfig.MovieWatchHistory(),
+                ),
+            )
+        }
+
+        return HomePageResolvedSettings(rows.mapIndexed { index, row -> row.copy(id = index) })
     }
 
     suspend fun resolve(id: Int, config: HomeRowConfig): HomeRowConfigDisplay = when (config) {
@@ -183,6 +204,7 @@ class HomeSettingsService @Inject constructor(
         is HomeRowConfig.RecentlyReleased -> HomeRowConfigDisplay(id, context.getString(R.string.recently_released_in, api.userLibraryApi.getItem(itemId = config.parentId).content.name ?: ""), config)
         is HomeRowConfig.Favorite -> HomeRowConfigDisplay(id, context.getString(R.string.favorite_items, context.getString(favoriteOptions[config.kind]!!)), config)
         is HomeRowConfig.MyList -> HomeRowConfigDisplay(id, context.getString(R.string.favorites), config)
+        is HomeRowConfig.MovieWatchHistory -> HomeRowConfigDisplay(id, context.getString(R.string.movie_watch_history), config)
         is HomeRowConfig.Recordings -> HomeRowConfigDisplay(id, context.getString(R.string.active_recordings), config)
         is HomeRowConfig.TvPrograms -> HomeRowConfigDisplay(id, context.getString(R.string.live_tv), config)
         is HomeRowConfig.TvChannels -> HomeRowConfigDisplay(id, context.getString(R.string.channels), config)
@@ -203,21 +225,82 @@ class HomeSettingsService @Inject constructor(
         is HomeRowConfig.ByParent -> Success(api.userLibraryApi.getItem(itemId = row.parentId).content.name ?: context.getString(R.string.collection), GetItemsRequestHandler.execute(api, GetItemsRequest(userId = userDto.id, parentId = row.parentId, recursive = row.recursive, sortBy = row.sort?.let { listOf(it.sort) }, sortOrder = row.sort?.let { listOf(it.direction) }, limit = limit, fields = DefaultItemFields)).content.items.map { BaseItem(it, row.viewOptions.useSeries) }, row.viewOptions)
         is HomeRowConfig.GetItems -> Success(row.name, GetItemsRequestHandler.execute(api, row.getItems.let { if (it.limit == null) it.copy(userId = userDto.id, limit = limit) else it.copy(userId = userDto.id) }).content.items.map { BaseItem(it, row.viewOptions.useSeries) }, row.viewOptions)
         is HomeRowConfig.Favorite -> {
-            // THE CRITICAL FIX: Changed config.kind to row.kind
             val title = context.getString(R.string.favorite_items, context.getString(favoriteOptions[row.kind]!!))
             val items = if (row.kind == BaseItemKind.PERSON) GetPersonsHandler.execute(api, GetPersonsRequest(userId = userDto.id, limit = limit, fields = DefaultItemFields, isFavorite = true, enableImages = true, enableImageTypes = listOf(ImageType.PRIMARY))).content.items.map { BaseItem(it, true) }
             else GetItemsRequestHandler.execute(api, GetItemsRequest(userId = userDto.id, recursive = true, limit = limit, fields = DefaultItemFields, includeItemTypes = listOf(row.kind), isFavorite = true)).content.items.map { BaseItem(it, row.viewOptions.useSeries) }
             Success(title, items, row.viewOptions)
         }
         is HomeRowConfig.MyList -> {
-            val movies = GetItemsRequestHandler.execute(api, GetItemsRequest(userId = userDto.id, recursive = true, fields = DefaultItemFields, includeItemTypes = listOf(BaseItemKind.MOVIE), isFavorite = true)).content.items
-            val shows = GetItemsRequestHandler.execute(api, GetItemsRequest(userId = userDto.id, recursive = true, fields = DefaultItemFields, includeItemTypes = listOf(BaseItemKind.SERIES), isFavorite = true)).content.items
-            Success(context.getString(R.string.favorites), (movies + shows).sortedByDescending { it.dateCreated }.map { BaseItem(it, row.viewOptions.useSeries) }, row.viewOptions)
+            // Fetch shows and movies in PARALLEL for speed, then combine.
+            // enableUserData = true ensures isFavorite is populated so hearts show correctly.
+            // distinctBy removes any duplicates the API might return.
+            val showsDeferred = scope.async(Dispatchers.IO) {
+                GetItemsRequestHandler.execute(
+                    api,
+                    GetItemsRequest(
+                        userId = userDto.id,
+                        recursive = true,
+                        fields = DefaultItemFields,
+                        includeItemTypes = listOf(BaseItemKind.SERIES),
+                        isFavorite = true,
+                        enableUserData = true,
+                        sortBy = listOf(ItemSortBy.RANDOM),
+                    )
+                ).content.items
+            }
+            val moviesDeferred = scope.async(Dispatchers.IO) {
+                GetItemsRequestHandler.execute(
+                    api,
+                    GetItemsRequest(
+                        userId = userDto.id,
+                        recursive = true,
+                        fields = DefaultItemFields,
+                        includeItemTypes = listOf(BaseItemKind.MOVIE),
+                        isFavorite = true,
+                        enableUserData = true,
+                        sortBy = listOf(ItemSortBy.RANDOM),
+                    )
+                ).content.items
+            }
+            val shows = showsDeferred.await()
+            val movies = moviesDeferred.await()
+            val combined = (shows + movies)
+                .distinctBy { it.id }
+                .map { BaseItem(it, row.viewOptions.useSeries) }
+            Success(context.getString(R.string.favorites), combined, row.viewOptions)
+        }
+        is HomeRowConfig.MovieWatchHistory -> {
+            val items =
+                GetItemsRequestHandler.execute(
+                    api,
+                    GetItemsRequest(
+                        userId = userDto.id,
+                        recursive = true,
+                        fields = DefaultItemFields,
+                        includeItemTypes = listOf(BaseItemKind.MOVIE),
+                        isPlayed = true,
+                        enableUserData = true,
+                        sortBy = listOf(ItemSortBy.DATE_PLAYED),
+                        sortOrder = listOf(SortOrder.DESCENDING),
+                    ),
+                ).content.items.map { BaseItem(it, row.viewOptions.useSeries) }
+            Success(context.getString(R.string.movie_watch_history), items, row.viewOptions)
         }
         is HomeRowConfig.Recordings -> Success(context.getString(R.string.active_recordings), api.liveTvApi.getRecordings(GetRecordingsRequest(userId = userDto.id, isInProgress = true, fields = DefaultItemFields, limit = limit, enableImages = true, enableUserData = true)).content.items.map { BaseItem(it, row.viewOptions.useSeries) }, row.viewOptions)
         is HomeRowConfig.TvPrograms -> Success(context.getString(R.string.live_tv), api.liveTvApi.getRecommendedPrograms(GetRecommendedProgramsRequest(userId = userDto.id, fields = DefaultItemFields, limit = limit, enableUserData = true, enableImages = true, enableImageTypes = listOf(ImageType.PRIMARY), imageTypeLimit = 1)).content.items.map { BaseItem(it, row.viewOptions.useSeries) }, row.viewOptions)
         is HomeRowConfig.TvChannels -> Success(context.getString(R.string.channels), api.liveTvApi.getLiveTvChannels(userId = userDto.id, fields = DefaultItemFields, limit = limit, enableImages = true).toBaseItems(api, row.viewOptions.useSeries), row.viewOptions)
         is HomeRowConfig.Suggestions -> Success(context.getString(R.string.suggestions_for, api.userLibraryApi.getItem(itemId = row.parentId).content.name ?: ""), emptyList(), row.viewOptions)
+    }
+
+    private fun ensureMovieWatchHistoryRow(rows: List<HomeRowConfig>): List<HomeRowConfig> {
+        if (rows.any { it is HomeRowConfig.MovieWatchHistory }) {
+            return rows
+        }
+
+        val insertIndex = rows.indexOfLast { it is HomeRowConfig.RecentlyAdded }.let { if (it >= 0) it + 1 else rows.size }
+        return rows.toMutableList().apply {
+            add(insertIndex, HomeRowConfig.MovieWatchHistory())
+        }
     }
 
     companion object {

@@ -13,11 +13,14 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.blur
@@ -87,6 +90,23 @@ fun FocusRequester.tryRequestFocus(tag: String? = null): Boolean =
         false
     }
 
+suspend fun FocusRequester.tryRequestFocusAfterLayout(
+    tag: String? = null,
+    attempts: Int = 3,
+): Boolean {
+    repeat(attempts.coerceAtLeast(1)) { attempt ->
+        if (attempt > 0) {
+            withFrameNanos { }
+        }
+        if (tryRequestFocus(tag)) {
+            return true
+        }
+    }
+
+    Timber.v("Unable to restore focus after %d attempts, tag=%s", attempts, tag)
+    return false
+}
+
 /**
  * Used to apply modifiers conditionally.
  */
@@ -152,6 +172,55 @@ fun Modifier.handleDPadKeyEvents(
 }
 
 /**
+ * Consumes the center/enter key-up event that follows a long press.
+ *
+ * On Android TV, the long-press action can trigger recomposition/focus changes before the
+ * release arrives. If that release is left unconsumed, it may click whatever newly-focused
+ * element is under it, such as the profile icon in the nav drawer.
+ */
+@Composable
+fun Modifier.consumeCenterKeyUpAfterLongPress(): Modifier {
+    var suppressCenterKeyUp by rememberSaveable { mutableStateOf(false) }
+
+    return onPreviewKeyEvent {
+        when (it.nativeKeyEvent.keyCode) {
+            KeyEvent.KEYCODE_DPAD_CENTER,
+            KeyEvent.KEYCODE_ENTER,
+            KeyEvent.KEYCODE_NUMPAD_ENTER,
+                -> {
+                    when (it.nativeKeyEvent.action) {
+                        KeyEvent.ACTION_DOWN -> {
+                            if (
+                                it.nativeKeyEvent.isLongPress ||
+                                it.nativeKeyEvent.repeatCount > 0 ||
+                                it.nativeKeyEvent.eventTime - it.nativeKeyEvent.downTime > 500
+                            ) {
+                                suppressCenterKeyUp = true
+                            }
+                        }
+
+                        KeyEvent.ACTION_UP -> {
+                            val shouldConsume =
+                                suppressCenterKeyUp ||
+                                    it.nativeKeyEvent.eventTime - it.nativeKeyEvent.downTime > 500
+                            suppressCenterKeyUp = false
+                            if (shouldConsume) {
+                                return@onPreviewKeyEvent true
+                            }
+                        }
+
+                        else -> {
+                            suppressCenterKeyUp = false
+                        }
+                    }
+                }
+        }
+
+        false
+    }
+}
+
+/**
  * Run a [LaunchedEffect] exactly once even with multiple recompositions.
  *
  * If the composition is removed from the navigation back stack and "re-added", this will run again
@@ -168,7 +237,8 @@ fun OneTimeLaunchedEffect(runOnceBlock: suspend CoroutineScope.() -> Unit) {
 }
 
 /**
- * Calls [tryRequestFocus] on the provided [FocusRequester] when this composable launches or resumes
+ * Calls [tryRequestFocusAfterLayout] on the provided [FocusRequester] when this composable
+ * enters composition (including when returning from in-process navigation like playback).
  */
 @Composable
 fun RequestOrRestoreFocus(
@@ -176,14 +246,12 @@ fun RequestOrRestoreFocus(
     debugKey: String? = null,
 ) {
     if (focusRequester != null) {
-        LaunchedEffect(Unit) {
-            debugKey?.let { Timber.v("RequestOrRestoreFocus: %s", it) }
-            focusRequester.tryRequestFocus()
+        val scope = rememberCoroutineScope()
+        LifecycleResumeEffect(Unit) {
+            debugKey?.let { Timber.v("RequestOrRestoreFocus onResume: %s", it) }
+            scope.launch { focusRequester.tryRequestFocusAfterLayout(debugKey) }
+            onPauseOrDispose { }
         }
-//        LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
-//            debugKey?.let { Timber.v("RequestOrRestoreFocus onResume: %s", it) }
-//            focusRequester.tryRequestFocus()
-//        }
     }
 }
 

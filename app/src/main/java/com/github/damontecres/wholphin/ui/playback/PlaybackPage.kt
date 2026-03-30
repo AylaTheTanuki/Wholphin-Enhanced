@@ -46,6 +46,8 @@ import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.intl.Locale
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -65,6 +67,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.surfaceColorAtElevation
 import com.github.damontecres.wholphin.data.model.ItemPlayback
 import com.github.damontecres.wholphin.data.model.Playlist
+import com.github.damontecres.wholphin.preferences.AppPreference
 import com.github.damontecres.wholphin.preferences.PlayerBackend
 import com.github.damontecres.wholphin.preferences.UserPreferences
 import com.github.damontecres.wholphin.preferences.skipBackOnResume
@@ -74,6 +77,7 @@ import com.github.damontecres.wholphin.ui.components.ErrorMessage
 import com.github.damontecres.wholphin.ui.components.LoadingPage
 import com.github.damontecres.wholphin.ui.components.TextButton
 import com.github.damontecres.wholphin.ui.ifElse
+import com.github.damontecres.wholphin.ui.main.HomeViewModel
 import com.github.damontecres.wholphin.ui.nav.Destination
 import com.github.damontecres.wholphin.ui.preferences.subtitle.SubtitleSettings.applyToMpv
 import com.github.damontecres.wholphin.ui.preferences.subtitle.SubtitleSettings.calculateEdgeSize
@@ -107,10 +111,15 @@ fun PlaybackPage(
         hiltViewModel<PlaybackViewModel, PlaybackViewModel.Factory>(
             creationCallback = { it.create(destination) },
         ),
+    homeViewModel: HomeViewModel = hiltViewModel(),
 ) {
     LifecycleStartEffect(destination) {
         onStopOrDispose {
             viewModel.release()
+            // Refresh home continue watching / next up rows in the background
+            // so they are already up to date when the user navigates back
+            homeViewModel.refreshWatchingRows()
+            homeViewModel.refreshMovieWatchHistoryRow()
         }
     }
 
@@ -122,7 +131,7 @@ fun PlaybackPage(
 
         LoadingState.Pending,
         LoadingState.Loading,
-        -> {
+            -> {
             LoadingPage(modifier.background(Color.Black))
         }
 
@@ -154,6 +163,8 @@ fun PlaybackPageContent(
     val scope = rememberCoroutineScope()
     val configuration = LocalConfiguration.current
     val density = LocalDensity.current
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
     val mediaInfo by viewModel.currentMediaInfo.observeAsState()
     val userDto by viewModel.currentUserDto.observeAsState()
 
@@ -176,12 +187,14 @@ fun PlaybackPageContent(
     val subtitleSearchLanguage by viewModel.subtitleSearchLanguage.observeAsState(Locale.current.language)
 
     var playbackDialog by remember { mutableStateOf<PlaybackDialogType?>(null) }
-    // We create a live UI variable that starts with the old data, but can be updated!
     var currentMaxBitrate by remember { mutableLongStateOf(preferences.appPreferences.playbackPreferences.maxBitrate) }
+    LaunchedEffect(destination) {
+        keyboardController?.hide()
+        focusManager.clearFocus(force = true)
+    }
     LaunchedEffect(player) {
         if (playerBackend == PlayerBackend.MPV) {
             scope.launch(Dispatchers.IO + ExceptionHandler()) {
-                // MPV can't play HDR, so always use regular settings
                 preferences.appPreferences.interfacePreferences.subtitlesPreferences.applyToMpv(
                     configuration,
                     density,
@@ -236,7 +249,6 @@ fun PlaybackPageContent(
 
     var skipIndicatorDuration by remember { mutableLongStateOf(0L) }
     LaunchedEffect(controllerViewState.controlsVisible) {
-        // If controller shows/hides, immediately cancel the skip indicator
         skipIndicatorDuration = 0L
     }
     var skipPosition by remember { mutableLongStateOf(0L) }
@@ -305,11 +317,7 @@ fun PlaybackPageContent(
 
             is PlaybackAction.SetMaxBitrate -> {
                 val currentPos = player.currentPosition
-
-                // 1. THIS IS THE MAGIC: Instantly update the UI's live memory!
-                currentMaxBitrate = it.bitrate?.toLong() ?: 120000000L
-
-                player.stop()
+                currentMaxBitrate = it.bitrate?.toLong() ?: AppPreference.DEFAULT_BITRATE
                 viewModel.setBitrateAndReload(it.bitrate, currentPos)
             }
 
@@ -319,7 +327,6 @@ fun PlaybackPageContent(
             }
 
             PlaybackAction.Next -> {
-                // TODO focus is lost
                 viewModel.playNextUp()
             }
 
@@ -336,7 +343,7 @@ fun PlaybackPageContent(
 
     val showSegment =
         currentSegment?.interacted == false &&
-            nextUp == null && !controllerViewState.controlsVisible && skipIndicatorDuration == 0L
+                nextUp == null && !controllerViewState.controlsVisible && skipIndicatorDuration == 0L
     BackHandler(showSegment) {
         viewModel.updateSegment(currentSegment?.segment?.id, true)
     }
@@ -378,7 +385,6 @@ fun PlaybackPageContent(
                 Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = dimOpacity)))
             }
 
-            // If D-pad skipping, show the amount skipped in an animation
             if (!controllerViewState.controlsVisible && skipIndicatorDuration != 0L) {
                 SkipIndicator(
                     durationMs = skipIndicatorDuration,
@@ -390,8 +396,7 @@ fun PlaybackPageContent(
                             .align(Alignment.BottomCenter)
                             .padding(bottom = 70.dp),
                 )
-                // Show a small progress bar along the bottom of the screen
-                val showSkipProgress = true // TODO get from preferences
+                val showSkipProgress = true
                 if (showSkipProgress) {
                     val percent = skipPosition.toFloat() / player.duration.toFloat()
                     Box(
@@ -406,7 +411,6 @@ fun PlaybackPageContent(
                 }
             }
 
-            // The playback controls
             AnimatedVisibility(
                 controllerViewState.controlsVisible,
                 Modifier,
@@ -458,7 +462,6 @@ fun PlaybackPageContent(
             val subtitleImageOpacity =
                 remember(subtitleSettings) { subtitleSettings.imageSubtitleOpacity / 100f }
 
-            // Subtitles
             if (skipIndicatorDuration == 0L && currentItemPlayback.subtitleIndexEnabled) {
                 val maxSize by animateFloatAsState(if (controllerViewState.controlsVisible) .7f else 1f)
                 val isImageSubtitles = remember(cues) { cues.firstOrNull()?.bitmap != null }
@@ -490,7 +493,6 @@ fun PlaybackPageContent(
             }
         }
 
-        // Ask to skip intros, etc button
         AnimatedVisibility(
             showSegment,
             modifier =
@@ -515,7 +517,6 @@ fun PlaybackPageContent(
             }
         }
 
-        // Next up episode
         BackHandler(nextUp != null) {
             if (player.isPlaying) {
                 scope.launch(ExceptionHandler()) {
@@ -575,7 +576,6 @@ fun PlaybackPageContent(
                     modifier =
                         Modifier
                             .padding(8.dp)
-//                                    .height(128.dp)
                             .fillMaxHeight(1 - playerSize)
                             .fillMaxWidth(.66f)
                             .align(Alignment.BottomCenter)
@@ -627,7 +627,7 @@ fun PlaybackPageContent(
     playbackDialog?.let { type ->
         PlaybackDialog(
             type = type,
-            syncPlayManager = viewModel.syncPlayManager, // <--- ADD THIS LINE RIGHT HERE!
+            syncPlayManager = viewModel.syncPlayManager,
             settings =
                 PlaybackSettings(
                     showDebugInfo = showDebugInfo,
@@ -655,7 +655,6 @@ fun PlaybackPageContent(
             },
             onClickPlaybackDialogType = {
                 if (it == PlaybackDialogType.SUBTITLE_DELAY) {
-                    // Hide controls so subtitles are fully visible
                     controllerViewState.hideControls()
                 }
                 playbackDialog = it

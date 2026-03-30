@@ -656,6 +656,14 @@ sealed interface AppPreference<Pref, T> {
                 setter = { prefs, _ -> prefs },
             )
 
+        val MovieSectionRows =
+            AppClickablePreference<AppPreferences>(
+                title = R.string.movie_section_rows,
+                summary = R.string.movie_section_rows_summary,
+                getter = { },
+                setter = { prefs, _ -> prefs },
+            )
+
         val CustomizeHome =
             AppDestinationPreference<AppPreferences>(
                 title = R.string.customize_home,
@@ -877,7 +885,7 @@ sealed interface AppPreference<Pref, T> {
         val ImageDiskCacheSize =
             AppSliderPreference<AppPreferences>(
                 title = R.string.image_cache_size,
-                defaultValue = 200,
+                defaultValue = 700,
                 min = 25,
                 max = 1_000,
                 interval = 25,
@@ -1039,6 +1047,7 @@ val basicPreferences =
                     AppPreference.RequireProfilePin,
                     AppPreference.CustomizeHome,
                     AppPreference.UserPinnedNavDrawerItems,
+                    AppPreference.MovieSectionRows,
                 ),
         ),
         PreferenceGroup(
@@ -1120,7 +1129,6 @@ val advancedPreferences =
                     listOf(
                         AppPreference.OneClickPause,
                         AppPreference.GlobalContentScale,
-                        AppPreference.MaxBitrate,
                         AppPreference.RefreshRateSwitching,
                         AppPreference.ResolutionSwitching,
                         AppPreference.PlaybackDebugInfo,
